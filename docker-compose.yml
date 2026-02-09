@@ -1,0 +1,153 @@
+name: tradinghub
+
+# Tradinghub - Vollständiger Standalone-Betrieb
+# Alle Services mit persistenten Volumes
+
+services:
+  # Next.js Tradinghub App
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: tradejournal-local:latest
+    container_name: tradinghub_app
+    ports:
+      - "${APP_PORT:-3001}:3000"
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_PARSE_APP_ID=tradenote123
+      - NEXT_PUBLIC_PARSE_JS_KEY=tradenote123
+      - NEXT_PUBLIC_PARSE_SERVER_URL=http://10.10.20.200:28080/parse
+      - REDIS_URL=redis://redis:6379
+      - INTERNAL_PARSE_SERVER_URL=http://backend:28080/parse
+      - MASTER_KEY=tradenote123
+      - DATABASE_URL=postgresql://tradenote:tradenote_archive@postgres:5432/setup_archive
+      - IB_FLEX_TOKEN=${IB_FLEX_TOKEN}
+      - IB_FLEX_QUERY_ID=${IB_FLEX_QUERY_ID}
+    depends_on:
+      backend:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    networks:
+      - tradinghub_net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"const http = require('http'); const req = http.request({host: 'localhost', port: 3000, path: '/api/health', timeout: 5000}, (res) => { process.exit(res.statusCode === 200 ? 0 : 1); }); req.on('error', () => process.exit(1)); req.end();\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Parse Server Backend (TradeNote)
+  backend:
+    image: ghcr.io/daerkle/tradenote-backend:latest
+    container_name: tradinghub_backend
+    ports:
+      - "28080:28080"
+    environment:
+      - MONGO_URI=mongodb://tradenote:tradenote@mongo:27017/tradenote?authSource=admin
+      - TRADENOTE_DATABASE=tradenote
+      - APP_ID=tradenote123
+      - MASTER_KEY=tradenote123
+      - TRADENOTE_PORT=28080
+      - PARSE_SERVER_ALLOW_CLIENT_CLASS_CREATION=1
+      - allowClientClassCreation=true
+      - PARSE_SERVER_SESSION_LENGTH=2592000
+      - PARSE_SERVER_EXPIRE_INACTIVE_SESSIONS=false
+    depends_on:
+      mongo:
+        condition: service_healthy
+    networks:
+      - tradinghub_net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"const net = require('net'); const client = new net.Socket(); client.connect(28080, 'localhost', () => { client.destroy(); process.exit(0); }); client.on('error', () => process.exit(1)); setTimeout(() => process.exit(1), 5000);\""]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 45s
+
+  # MongoDB Datenbank
+  mongo:
+    image: mongo:7
+    container_name: tradinghub_mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - tradinghub_mongo_data:/data/db
+      - tradinghub_mongo_config:/data/configdb
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=tradenote
+      - MONGO_INITDB_ROOT_PASSWORD=tradenote
+      - MONGO_INITDB_DATABASE=tradenote
+    networks:
+      - tradinghub_net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # PostgreSQL Datenbank (Setup Archive)
+  postgres:
+    image: postgres:16-alpine
+    container_name: tradinghub_postgres
+    ports:
+      - "5433:5432"
+    volumes:
+      - tradinghub_postgres_data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER=tradenote
+      - POSTGRES_PASSWORD=tradenote_archive
+      - POSTGRES_DB=setup_archive
+    networks:
+      - tradinghub_net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tradenote -d setup_archive"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: tradinghub_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - tradinghub_redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    networks:
+      - tradinghub_net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+networks:
+  tradinghub_net:
+    driver: bridge
+    name: tradinghub_network
+
+volumes:
+  tradinghub_mongo_data:
+    name: tradinghub_mongo_data
+    driver: local
+  tradinghub_mongo_config:
+    name: tradinghub_mongo_config
+    driver: local
+  tradinghub_redis_data:
+    name: tradinghub_redis_data
+    driver: local
+  tradinghub_postgres_data:
+    name: tradinghub_postgres_data
+    driver: local

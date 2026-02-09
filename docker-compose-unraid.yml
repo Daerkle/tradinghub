@@ -1,0 +1,81 @@
+version: "3.8"
+
+# Tradinghub - Unraid optimierte Konfiguration
+# Enthält alle Services für vollständigen Standalone-Betrieb
+
+services:
+  # Next.js Tradinghub App
+  tradinghub:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: daerkle/tradinghub:latest
+    container_name: tradinghub_app
+    ports:
+      - 3000:3000
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_PARSE_APP_ID: tradenote123
+      NEXT_PUBLIC_PARSE_JS_KEY: tradenote123
+      NEXT_PUBLIC_PARSE_SERVER_URL: http://localhost:28080/parse
+      FMP_API_KEY: ${FMP_API_KEY}
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      - tradenote
+      - redis
+    restart: unless-stopped
+
+  # Parse Server Backend (TradeNote)
+  tradenote:
+    build:
+      context: ../TradeNote-main
+      dockerfile: docker/Dockerfile
+    image: daerkle/tradejournal:latest
+    container_name: tradenote_backend
+    ports:
+      - 28080:28080
+    environment:
+      MONGO_URI: mongodb://tradenote:tradenote@mongo:27017/tradenote?authSource=admin
+      TRADENOTE_DATABASE: tradenote
+      APP_ID: tradenote123
+      MASTER_KEY: tradenote123
+      TRADENOTE_PORT: 28080
+    depends_on:
+      - mongo
+    restart: unless-stopped
+
+  # MongoDB Datenbank
+  mongo:
+    image: mongo:latest
+    container_name: tradinghub_mongo
+    volumes:
+      - tradinghub_mongo:/data/db
+    ports:
+      - 27017:27017
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: tradenote
+      MONGO_INITDB_ROOT_PASSWORD: tradenote
+      MONGO_INITDB_DATABASE: tradenote
+    restart: unless-stopped
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: tradinghub_redis
+    ports:
+      - 6379:6379
+    volumes:
+      - tradinghub_redis:/data
+    command: redis-server --appendonly yes
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  tradinghub_mongo:
+    name: tradinghub_mongo
+  tradinghub_redis:
+    name: tradinghub_redis
