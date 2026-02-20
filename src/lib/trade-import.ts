@@ -358,6 +358,22 @@ function parseDateTime(value: string | undefined): Date | null {
         if (d) return d;
       }
     }
+
+    // Compact split format, e.g. "20260204 110728" or "20260204 1107"
+    const compactDate = datePart.match(/^(\d{4})(\d{2})(\d{2})$/);
+    const compactTime = timePart.match(/^(\d{2})(\d{2})(\d{2})?$/);
+    if (compactDate && compactTime) {
+      const d = parseDateWithOptionalTime(
+        Number.parseInt(compactDate[1], 10),
+        Number.parseInt(compactDate[2], 10),
+        Number.parseInt(compactDate[3], 10),
+        compactTime[1],
+        compactTime[2],
+        compactTime[3] ?? "00",
+        tzPart
+      );
+      if (d) return d;
+    }
   }
 
   // Date without time
@@ -498,16 +514,43 @@ export function buildTradeImportHash(
   trade: Pick<ImportableTrade, "symbol" | "side" | "entryPrice" | "exitPrice" | "entryTime" | "exitTime" | "quantity">,
   source: string = "manual"
 ): string {
+  return [source, buildTradeIdentityKey(trade)].join("|");
+}
+
+function toIdentityNumber(value: number, decimals: number): string {
+  if (!Number.isFinite(value)) return "0";
+  return value.toFixed(decimals);
+}
+
+function toIdentityTimestamp(date: Date): string {
+  const ts = date.getTime();
+  if (!Number.isFinite(ts)) return "0";
+  // Seconds resolution avoids false-negative duplicate checks from ms rounding differences.
+  return String(Math.round(ts / 1000));
+}
+
+export function buildTradeIdentityKey(
+  trade: Pick<ImportableTrade, "symbol" | "side" | "entryPrice" | "exitPrice" | "entryTime" | "exitTime" | "quantity">
+): string {
   return [
-    source,
-    trade.symbol.toUpperCase(),
+    trade.symbol.toUpperCase().trim(),
     trade.side,
-    trade.entryPrice.toFixed(6),
-    trade.exitPrice.toFixed(6),
-    trade.quantity.toFixed(8),
-    trade.entryTime.toISOString(),
-    trade.exitTime.toISOString(),
+    toIdentityNumber(trade.entryPrice, 4),
+    toIdentityNumber(trade.exitPrice, 4),
+    toIdentityNumber(Math.abs(trade.quantity), 4),
+    toIdentityTimestamp(trade.entryTime),
+    toIdentityTimestamp(trade.exitTime),
   ].join("|");
+}
+
+function combineDateAndTime(dateRaw: string | undefined, timeRaw: string | undefined): string | undefined {
+  const datePart = (dateRaw || "").trim();
+  const timePart = (timeRaw || "").trim();
+
+  if (datePart && timePart) return `${datePart} ${timePart}`;
+  if (datePart) return datePart;
+  if (timePart) return timePart;
+  return undefined;
 }
 
 function buildHeaderIndex(headers: string[]): Map<string, number> {
@@ -527,6 +570,12 @@ function getValue(row: string[], headerIndex: Map<string, number>, aliases: stri
 function looksLikeIBKR(headers: string[], hasTradesSection: boolean): boolean {
   if (hasTradesSection) return true;
   const keys = new Set(headers.map(normalizeHeader));
+  const hasDateOrTime =
+    keys.has("datetime") ||
+    keys.has("tradedatetime") ||
+    keys.has("date") ||
+    keys.has("tradetime") ||
+    (keys.has("date") && keys.has("time"));
   return (
     keys.has("commfee") ||
     keys.has("tprice") ||
@@ -536,7 +585,7 @@ function looksLikeIBKR(headers: string[], hasTradesSection: boolean): boolean {
       keys.has("quantity") &&
       keys.has("symbol") &&
       (keys.has("tprice") || keys.has("tradeprice") || keys.has("price")) &&
-      (keys.has("datetime") || keys.has("date") || keys.has("tradetime"))
+      hasDateOrTime
     )
   );
 }
@@ -577,10 +626,13 @@ function parseIBKRExecutions(rows: string[][]): { executions: IBExecution[]; war
   const executions: IBExecution[] = [];
   for (const row of dataRows) {
     const symbolRaw = getValue(row, headerIndex, ["symbol", "ticker", "underlyingsymbol"]);
-    const timeRaw = getValue(row, headerIndex, ["datetime", "date", "tradetime", "tradetimeutc", "tradedatetime"]);
-    const qtyRaw = getValue(row, headerIndex, ["quantity", "qty", "shares"]);
-    const priceRaw = getValue(row, headerIndex, ["tprice", "tradeprice", "price"]);
-    const commissionRaw = getValue(row, headerIndex, ["commfee", "commission", "fees", "comm"]);
+    const dateTimeRaw = getValue(row, headerIndex, ["datetime", "tradedatetime", "datetimeutc", "executedatetime"]);
+    const dateRaw = getValue(row, headerIndex, ["date", "tradedate", "executiondate"]);
+    const timeOnlyRaw = getValue(row, headerIndex, ["time", "tradetime", "tradetimeutc", "executiontime"]);
+    const timeRaw = dateTimeRaw || combineDateAndTime(dateRaw, timeOnlyRaw);
+    const qtyRaw = getValue(row, headerIndex, ["quantity", "qty", "shares", "filled", "filledquantity"]);
+    const priceRaw = getValue(row, headerIndex, ["tprice", "tradeprice", "price", "avgprice", "fillprice"]);
+    const commissionRaw = getValue(row, headerIndex, ["commfee", "commission", "fees", "comm", "ibcommission"]);
     const buySellRaw = getValue(row, headerIndex, ["buysell", "side", "action"]);
 
     const symbol = (symbolRaw || "").trim().toUpperCase();

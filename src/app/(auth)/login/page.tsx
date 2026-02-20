@@ -30,7 +30,7 @@ export default function LoginPage() {
     try {
       await login(username, password);
       toast.success("Erfolgreich angemeldet");
-      router.push("/dashboard");
+      router.replace("/dashboard");
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "Login failed";
       toast.error(message);

@@ -16,7 +16,7 @@ export default function DashboardLayout({
   children: React.ReactNode;
 }) {
   const router = useRouter();
-  const { isAuthenticated, isLoading, checkAuth } = useAuthStore();
+  const { isAuthenticated, checkAuth } = useAuthStore();
   const [authChecked, setAuthChecked] = useState(false);
 
   // Validate session once on mount to avoid hydration deadlocks
@@ -28,13 +28,13 @@ export default function DashboardLayout({
 
   // Redirect only after the auth check completed
   useEffect(() => {
-    if (!DEV_BYPASS_AUTH && authChecked && !isLoading && !isAuthenticated) {
+    if (!DEV_BYPASS_AUTH && authChecked && !isAuthenticated) {
       router.push("/login");
     }
-  }, [authChecked, isLoading, isAuthenticated, router]);
+  }, [authChecked, isAuthenticated, router]);
 
   // Show spinner until auth check completes
-  if (!DEV_BYPASS_AUTH && (!authChecked || isLoading)) {
+  if (!DEV_BYPASS_AUTH && !authChecked) {
     return (
       <div className="flex h-screen items-center justify-center">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>

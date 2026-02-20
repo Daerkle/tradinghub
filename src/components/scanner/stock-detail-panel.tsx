@@ -8,6 +8,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { translateNewsTag } from "@/lib/news-tags";
 import { StockChart } from "@/components/scanner/stock-chart";
 import { formatNumber, getRSRatingColor, getSetupScoreColor } from "@/components/scanner/metric-tooltip";
 import type { StockData, NewsItem } from "@/types/scanner";
@@ -69,7 +70,7 @@ function NewsSection({ symbol }: { symbol: string }) {
             .slice(0, 4)
             .map(([tag, count]) => (
               <Badge key={tag} variant="secondary" className="text-[10px] px-1.5 py-0">
-                {tag} ({count})
+                {translateNewsTag(tag)} ({count})
               </Badge>
             ))}
         </div>
@@ -95,7 +96,7 @@ function NewsSection({ symbol }: { symbol: string }) {
             <div className="flex flex-wrap gap-1 mt-1">
               {item.tags.slice(0, 3).map((tag) => (
                 <Badge key={tag} variant="outline" className="text-[10px] px-1.5 py-0">
-                  {tag}
+                  {translateNewsTag(tag)}
                 </Badge>
               ))}
             </div>

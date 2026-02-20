@@ -1,13 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchStockNews } from "@/lib/scanner-service";
-
-function isSameUtcDay(date: Date, reference: Date = new Date()): boolean {
-  return (
-    date.getUTCFullYear() === reference.getUTCFullYear() &&
-    date.getUTCMonth() === reference.getUTCMonth() &&
-    date.getUTCDate() === reference.getUTCDate()
-  );
-}
+import { isSameMarketDay } from "@/lib/market-time";
 
 export async function GET(
   request: NextRequest,
@@ -25,7 +18,7 @@ export async function GET(
       todayOnly: false,
       maxItems: 50,
     });
-    const todayNews = allNews.filter((item) => isSameUtcDay(new Date(item.publishedAt)));
+    const todayNews = allNews.filter((item) => isSameMarketDay(new Date(item.publishedAt)));
     const selectedNews = (todayOnly ? todayNews : allNews).slice(0, maxItems);
     const tagCounts = selectedNews.reduce<Record<string, number>>((acc, item) => {
       for (const tag of item.tags || []) {

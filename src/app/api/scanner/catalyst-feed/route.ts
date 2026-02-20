@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { scannerRateLimit } from "@/lib/rate-limiter";
-import { getCachedScannerResults } from "@/lib/redis-cache";
+import { getCachedScannerResults, getCachedSeededScannerResults } from "@/lib/redis-cache";
 import { runFullScanWithCache, fetchStockNews, getStockSymbols, type ScanResult } from "@/lib/scanner-service";
 import { filterByScanType } from "@/lib/scanner-filters";
 
@@ -45,21 +45,40 @@ export async function GET(request: NextRequest) {
   const stocksLimit = parsePositiveInt(params.get("stocks"), 12, 30);
   const newsLimit = parsePositiveInt(params.get("news"), 20, 60);
   const forceRefresh = params.get("refresh") === "true";
+  const cacheOnly = params.get("cacheOnly") === "true";
 
   try {
     let scanData: ScanResult | null = null;
-    let source: "cache" | "seeded-scan" | "fresh-scan" = "cache";
+    let source: "cache" | "cache-seeded" | "seeded-scan" | "fresh-scan" = "cache";
 
     if (!forceRefresh) {
       scanData = await getCachedScannerResults<ScanResult>();
+      if (!scanData || scanData.stocks.length === 0) {
+        scanData = await getCachedSeededScannerResults<ScanResult>();
+        if (scanData && scanData.stocks.length > 0) {
+          source = "cache-seeded";
+        }
+      }
+    }
+
+    if (cacheOnly && (!scanData || scanData.stocks.length === 0)) {
+      return NextResponse.json({
+        generatedAt: new Date().toISOString(),
+        source: "cache-miss",
+        scannedCount: 0,
+        stocks: [],
+        news: [],
+        newsTagCounts: {},
+      });
     }
 
     if (!scanData || scanData.stocks.length === 0 || forceRefresh) {
-      const seedSymbols = await getStockSymbols(true, 250);
+      const seedSymbols = await getStockSymbols(forceRefresh, 250);
       const scanResult = await runFullScanWithCache({
         useCache: true,
         forceRefresh: true,
         symbols: seedSymbols,
+        cacheKey: "seeded",
       });
       scanData = {
         stocks: scanResult.stocks,

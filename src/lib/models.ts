@@ -1,6 +1,8 @@
 "use client";
 
 import { Parse, initializeParse } from "./parse";
+import { getMarketDateKey, getMarketWeekdayIndex } from "./market-time";
+import { buildTradeIdentityKey } from "./trade-import";
 
 // Type definitions
 export interface TradeData {
@@ -212,11 +214,18 @@ function isTradeSchemaAddFieldError(error: unknown): boolean {
 }
 
 function toLocalDateKey(value: Date | string): string {
-  const date = new Date(value);
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+  // Trades should be bucketed by market day (New York), not by the viewer's local time zone.
+  // Otherwise after-hours trades can appear on "Saturday" in EU time zones.
+  return getMarketDateKey(new Date(value));
+}
+
+function chunkArray<T>(items: T[], size: number): T[][] {
+  const normalizedSize = Math.max(1, Math.floor(size));
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += normalizedSize) {
+    chunks.push(items.slice(i, i + normalizedSize));
+  }
+  return chunks;
 }
 
 // Trade Service
@@ -378,6 +387,86 @@ export const TradeService = {
         if (typeof hash === "string" && hash.length > 0) {
           existing.add(hash);
         }
+      }
+    }
+
+    return existing;
+  },
+
+  async findExistingTradeIdentityKeys(
+    candidates: Array<Pick<TradeData, "symbol" | "side" | "entryPrice" | "exitPrice" | "entryTime" | "exitTime" | "quantity">>
+  ): Promise<Set<string>> {
+    initializeParse();
+    const existing = new Set<string>();
+    if (candidates.length === 0) return existing;
+
+    const symbols = [
+      ...new Set(
+        candidates
+          .map((trade) => trade.symbol.toUpperCase().trim())
+          .filter((symbol) => symbol.length > 0)
+      ),
+    ];
+
+    const timestamps = candidates
+      .flatMap((trade) => [new Date(trade.entryTime).getTime(), new Date(trade.exitTime).getTime()])
+      .filter((ts) => Number.isFinite(ts));
+
+    if (symbols.length === 0 || timestamps.length === 0) return existing;
+
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    const minDate = new Date(Math.min(...timestamps) - DAY_MS);
+    const maxDate = new Date(Math.max(...timestamps) + DAY_MS);
+
+    const Trade = Parse.Object.extend("trades");
+    const symbolChunks = chunkArray(symbols, 40);
+    const pageSize = 1000;
+
+    for (const symbolChunk of symbolChunks) {
+      let skip = 0;
+
+      while (true) {
+        const query = new Parse.Query(Trade);
+        query.equalTo("user", Parse.User.current());
+        query.containedIn("symbol", symbolChunk);
+        query.greaterThanOrEqualTo("exitTime", minDate);
+        query.lessThanOrEqualTo("entryTime", maxDate);
+        query.select("symbol", "side", "entryPrice", "exitPrice", "entryTime", "exitTime", "quantity");
+        query.limit(pageSize);
+        query.skip(skip);
+
+        const results = await query.find();
+        if (results.length === 0) break;
+
+        for (const trade of results) {
+          const symbol = String(trade.get("symbol") || "").toUpperCase().trim();
+          const sideRaw = trade.get("side");
+          const side = sideRaw === "short" ? "short" : sideRaw === "long" ? "long" : null;
+          const entryPrice = Number(trade.get("entryPrice"));
+          const exitPrice = Number(trade.get("exitPrice"));
+          const quantity = Number(trade.get("quantity"));
+          const entryTime = trade.get("entryTime");
+          const exitTime = trade.get("exitTime");
+
+          if (!symbol || !side) continue;
+          if (!Number.isFinite(entryPrice) || !Number.isFinite(exitPrice) || !Number.isFinite(quantity)) continue;
+          if (!(entryTime instanceof Date) || !(exitTime instanceof Date)) continue;
+
+          existing.add(
+            buildTradeIdentityKey({
+              symbol,
+              side,
+              entryPrice,
+              exitPrice,
+              entryTime,
+              exitTime,
+              quantity,
+            })
+          );
+        }
+
+        if (results.length < pageSize) break;
+        skip += pageSize;
       }
     }
 
@@ -633,7 +722,7 @@ export const TradeService = {
     const dayStats = new Map<number, { pnl: number; wins: number; total: number }>();
 
     for (const trade of trades) {
-      const day = new Date(trade.exitTime).getDay();
+      const day = getMarketWeekdayIndex(new Date(trade.exitTime));
       const current = dayStats.get(day) || { pnl: 0, wins: 0, total: 0 };
       current.pnl += trade.pnl;
       current.total++;

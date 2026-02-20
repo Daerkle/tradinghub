@@ -23,6 +23,9 @@ export interface StockData {
   distanceFrom200SMA: number;
   distanceFrom52WkHigh: number;
   distanceFrom52WkLow: number;
+  // Breakout Pivots (derived from daily history, excludes "today")
+  prior20DayHigh?: number;
+  prior20DayLow?: number;
   // EMAs
   ema10: number;
   ema20: number;

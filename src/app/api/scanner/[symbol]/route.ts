@@ -2,14 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { fetchStockData, fetchStockNews, applyCatalystMetrics, buildStockFromFinvizData } from "@/lib/scanner-service";
 import { fetchFinvizDataCached } from "@/lib/finviz-service";
 import { symbolRateLimit } from "@/lib/rate-limiter";
-
-function isSameUtcDay(date: Date, reference: Date = new Date()): boolean {
-  return (
-    date.getUTCFullYear() === reference.getUTCFullYear() &&
-    date.getUTCMonth() === reference.getUTCMonth() &&
-    date.getUTCDate() === reference.getUTCDate()
-  );
-}
+import { isSameMarketDay } from "@/lib/market-time";
 
 export async function GET(
   request: NextRequest,
@@ -71,7 +64,7 @@ export async function GET(
     // Fetch news
     const news = await fetchStockNews(symbol.toUpperCase());
     stockData.news = news;
-    stockData.todayNewsCount = news.filter((item) => isSameUtcDay(new Date(item.publishedAt))).length;
+    stockData.todayNewsCount = news.filter((item) => isSameMarketDay(new Date(item.publishedAt))).length;
 
     return NextResponse.json(applyCatalystMetrics(stockData));
   } catch (error) {

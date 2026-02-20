@@ -21,6 +21,11 @@ if (typeof window !== "undefined" && typeof crypto !== "undefined") {
 let initialized = false;
 
 function getParseServerURL(): string {
+  const configuredClientUrl = process.env.NEXT_PUBLIC_PARSE_SERVER_URL?.trim();
+  if (configuredClientUrl) {
+    return configuredClientUrl;
+  }
+
   // Always derive from current browser location for client-side
   // This ensures it works in both local dev and docker deployment
   if (typeof window !== "undefined") {

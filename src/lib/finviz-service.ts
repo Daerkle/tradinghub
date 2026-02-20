@@ -94,24 +94,26 @@ function parseNumber(value: string | undefined): number | undefined {
 
 // Extract value from HTML table row
 function extractValue(html: string, label: string): string | undefined {
-  // Pattern 1: <td ...>Label</td><td class="snapshot-td2..."><b>Value</b></td>
-  // Pattern 2: <td ...>Label</td><td class="snapshot-td2..."><b><span class="color-text...">Value</span></b></td>
-  const labelRegex = new RegExp(
-    `<td[^>]*class="snapshot-td2-cp"[^>]*>[^<]*${escapeRegex(label)}[^<]*</td>\\s*<td[^>]*class="snapshot-td2[^"]*"[^>]*>(?:<b>)?(?:<span[^>]*>)?([^<]+)(?:</span>)?(?:</b>)?</td>`,
+  // Finviz markup changes frequently (classes, nested tags like <small>, label suffixes like "ATR (14)").
+  // Keep this extraction tolerant:
+  // 1) Match the label cell text starting with the given label (allows suffixes like "(14)")
+  // 2) Capture the next <td> contents
+  // 3) Strip all tags and normalize whitespace
+  const rowRegex = new RegExp(
+    `<td[^>]*>\\s*(?:<[^>]*>\\s*)*${escapeRegex(label)}[^<]*</td>\\s*<td[^>]*>([\\s\\S]*?)</td>`,
     "i"
   );
-  const match = html.match(labelRegex);
-  if (match && match[1]) {
-    return match[1].trim();
-  }
+  const match = html.match(rowRegex);
+  if (!match || !match[1]) return undefined;
 
-  // Alternative pattern without specific classes
-  const altRegex = new RegExp(
-    `>${escapeRegex(label)}</(?:td|span|div)>[^<]*<[^>]*>(?:<b>)?(?:<span[^>]*>)?([^<]+)`,
-    "i"
-  );
-  const altMatch = html.match(altRegex);
-  return altMatch ? altMatch[1].trim() : undefined;
+  return match[1]
+    .replace(/<[^>]*>/g, "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, "\"")
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function escapeRegex(str: string): string {
@@ -221,8 +223,8 @@ export async function fetchFinvizData(symbol: string): Promise<FinvizStockData |
       // Technical
       beta: parseNumber(extractValue(html, "Beta")),
       atr: parseNumber(extractValue(html, "ATR")),
-      volatilityWeek: parsePercent(extractValue(html, "Volatility")?.split(" ")[0]),
-      volatilityMonth: parsePercent(extractValue(html, "Volatility")?.split(" ")[1]),
+      volatilityWeek: parsePercent(extractValue(html, "Volatility")?.split(/\s+/).filter(Boolean)[0]),
+      volatilityMonth: parsePercent(extractValue(html, "Volatility")?.split(/\s+/).filter(Boolean)[1]),
       relativeVolume: parseNumber(extractValue(html, "Rel Volume")),
       // Performance
       perfWeek: parsePercent(extractValue(html, "Perf Week")),

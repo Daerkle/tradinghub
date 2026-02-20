@@ -20,6 +20,7 @@ export const CACHE_TTL = {
 export const CACHE_KEYS = {
   STOCK_LIST: "scanner:stock_list",
   SCANNER_RESULTS: "scanner:results",
+  SCANNER_RESULTS_SEEDED: "scanner:results:seeded",
   FINVIZ_PREFIX: "scanner:finviz:",
   QUOTE_PREFIX: "scanner:quote:",
   NEWS_PREFIX: "scanner:news:",
@@ -209,6 +210,14 @@ export async function cacheScannerResults(results: unknown): Promise<boolean> {
 
 export async function getCachedScannerResults<T>(): Promise<T | null> {
   return cacheGet<T>(CACHE_KEYS.SCANNER_RESULTS);
+}
+
+export async function cacheSeededScannerResults(results: unknown): Promise<boolean> {
+  return cacheSet(CACHE_KEYS.SCANNER_RESULTS_SEEDED, results, CACHE_TTL.SCANNER_DATA);
+}
+
+export async function getCachedSeededScannerResults<T>(): Promise<T | null> {
+  return cacheGet<T>(CACHE_KEYS.SCANNER_RESULTS_SEEDED);
 }
 
 // Cache individual Finviz data

@@ -9,6 +9,8 @@ import { Tabs } from "@/components/ui/tabs";
 import { ScannerProgress } from "@/components/scanner/scanner-progress";
 import { ScannerFilterBadges } from "@/components/scanner/scanner-filter-badges";
 import { ScannerToolbar } from "@/components/scanner/scanner-toolbar";
+import { ScannerInsights } from "@/components/scanner/scanner-insights";
+import { ScannerSignals } from "@/components/scanner/scanner-signals";
 import { StockTable } from "@/components/scanner/stock-table";
 import { StockCardGrid } from "@/components/scanner/stock-card-grid";
 import { CompareView } from "@/components/scanner/compare-view";
@@ -114,6 +116,8 @@ export default function ScannerPage() {
       case "6m": return filterByScanType(streamedStocks, "6m");
       case "setup": return filterByScanType(streamedStocks, "qullamaggie");
       case "rs": return filterByScanType(streamedStocks, "rs");
+      case "minervini": return filterByScanType(streamedStocks, "minervini");
+      case "canslim": return filterByScanType(streamedStocks, "canslim");
       case "chrisswings": return filterByScanType(streamedStocks, "chrisswings");
       case "squeeze": return filterByScanType(streamedStocks, "squeeze");
       case "catalyst": return filterByScanType(streamedStocks, "catalyst");
@@ -131,6 +135,8 @@ export default function ScannerPage() {
   const momentum6mCount = streamedStocks.length > 0 ? filterByScanType(streamedStocks, "6m").length : 0;
   const setupCount = streamedStocks.length > 0 ? filterByScanType(streamedStocks, "qullamaggie").length : 0;
   const rsCount = streamedStocks.length > 0 ? filterByScanType(streamedStocks, "rs").length : 0;
+  const minerviniCount = streamedStocks.length > 0 ? filterByScanType(streamedStocks, "minervini").length : 0;
+  const canslimCount = streamedStocks.length > 0 ? filterByScanType(streamedStocks, "canslim").length : 0;
   const chrisSwingsCount = streamedStocks.length > 0 ? filterByScanType(streamedStocks, "chrisswings").length : 0;
   const squeezeCount = streamedStocks.length > 0 ? filterByScanType(streamedStocks, "squeeze").length : 0;
   const catalystCount = streamedStocks.length > 0 ? filterByScanType(streamedStocks, "catalyst").length : 0;
@@ -142,7 +148,7 @@ export default function ScannerPage() {
         <div>
           <h1 className="text-2xl sm:text-3xl font-bold">Scanner</h1>
           <p className="text-muted-foreground mt-1">
-            Momentum Leaders, Swing Setups & Breakout Patterns
+            Momentum Leader, Swing-Setups und Breakout-Muster
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -184,11 +190,22 @@ export default function ScannerPage() {
           momentum6mCount={momentum6mCount}
           setupCount={setupCount}
           rsCount={rsCount}
+          minerviniCount={minerviniCount}
+          canslimCount={canslimCount}
           chrisSwingsCount={chrisSwingsCount}
           squeezeCount={squeezeCount}
           catalystCount={catalystCount}
         />
       )}
+
+      {hasAnyStocks && (
+        <ScannerInsights
+          stocks={streamedStocks}
+          onSearch={(query) => setSearchQuery(query)}
+        />
+      )}
+
+      <ScannerSignals onSearch={(query) => setSearchQuery(query)} />
 
       {/* Non-blocking refresh indicator */}
       {loading && hasAnyStocks && (
@@ -247,6 +264,8 @@ export default function ScannerPage() {
                 momentum6mCount={momentum6mCount}
                 setupCount={setupCount}
                 rsCount={rsCount}
+                minerviniCount={minerviniCount}
+                canslimCount={canslimCount}
                 catalystCount={catalystCount}
                 clearSelection={() => setSelectedForCompare(new Set())}
               />

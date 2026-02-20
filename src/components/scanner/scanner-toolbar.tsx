@@ -61,6 +61,8 @@ interface ScannerToolbarProps {
   momentum6mCount: number;
   setupCount: number;
   rsCount: number;
+  minerviniCount: number;
+  canslimCount: number;
   catalystCount: number;
   clearSelection: () => void;
 }
@@ -70,7 +72,7 @@ export function ScannerToolbar({
   compareMode, setCompareMode, selectedCount, onShowCompare,
   displayCount, viewMode, setViewMode, cardsPerRow, setCardsPerRow,
   copiedList, setCopiedList, streamedStocks, displayData,
-  epCount, momentum1mCount, momentum3mCount, momentum6mCount, setupCount, rsCount, catalystCount,
+  epCount, momentum1mCount, momentum3mCount, momentum6mCount, setupCount, rsCount, minerviniCount, canslimCount, catalystCount,
   clearSelection,
 }: ScannerToolbarProps) {
   const getStocksForExport = (listName: string): StockData[] => {
@@ -82,6 +84,8 @@ export function ScannerToolbar({
       case "6m": return filterByScanType(streamedStocks, "6m");
       case "setup": return filterByScanType(streamedStocks, "qullamaggie");
       case "rs": return filterByScanType(streamedStocks, "rs");
+      case "minervini": return filterByScanType(streamedStocks, "minervini");
+      case "canslim": return filterByScanType(streamedStocks, "canslim");
       case "catalyst": return filterByScanType(streamedStocks, "catalyst");
       case "chrisswings": return filterByScanType(streamedStocks, "chrisswings");
       case "current": return displayData;
@@ -175,6 +179,8 @@ export function ScannerToolbar({
           { key: "6m", label: "6M", count: momentum6mCount, icon: Target, color: "text-zinc-400" },
           { key: "setup", label: "Setup", count: setupCount, icon: Star, color: "text-zinc-400" },
           { key: "rs", label: "RS", count: rsCount, icon: TrendingUp, color: "text-zinc-400" },
+          { key: "minervini", label: "Minervini", count: minerviniCount, icon: TrendingUp, color: "text-zinc-400" },
+          { key: "canslim", label: "CANSLIM", count: canslimCount, icon: Target, color: "text-zinc-400" },
           { key: "catalyst", label: "Catalyst", count: catalystCount, icon: Zap, color: "text-zinc-400" },
         ].map(({ key, label, count, icon: Icon, color }) => (
           <div key={key} className="flex items-center gap-1">

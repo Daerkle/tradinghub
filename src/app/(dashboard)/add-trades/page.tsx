@@ -33,6 +33,7 @@ import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { TradeService } from "@/lib/models";
 import {
+  buildTradeIdentityKey,
   buildTradeImportHash,
   parseTradesFromText,
   splitIntoImportBatches,
@@ -165,7 +166,7 @@ export default function AddTradesPage() {
     try {
       // Remove isValid flag before saving
       const importSource = selectedBroker || "auto";
-      const tradesToSave: ImportableTrade[] = validTrades.map(({ isValid, ...trade }) => {
+      const rawTradesToSave: ImportableTrade[] = validTrades.map(({ isValid, ...trade }) => {
         const normalized: ImportableTrade = {
           ...trade,
           importSource,
@@ -174,19 +175,44 @@ export default function AddTradesPage() {
         return normalized;
       });
 
+      // De-duplicate trades inside the uploaded file itself.
+      const seenIdentityKeys = new Set<string>();
+      let duplicateRowsInFile = 0;
+      const tradesToSave: ImportableTrade[] = [];
+      for (const trade of rawTradesToSave) {
+        const identityKey = buildTradeIdentityKey(trade);
+        if (seenIdentityKeys.has(identityKey)) {
+          duplicateRowsInFile++;
+          continue;
+        }
+        seenIdentityKeys.add(identityKey);
+        tradesToSave.push(trade);
+      }
+
       // Skip duplicates that were already imported before
       const existingHashes = await TradeService.findExistingImportHashes(
         tradesToSave
           .map((trade) => trade.importHash)
           .filter((hash): hash is string => typeof hash === "string" && hash.length > 0)
       );
-      const newTradesToSave = tradesToSave.filter((trade) => {
+      const notImportedByHash = tradesToSave.filter((trade) => {
         if (!trade.importHash) return true;
         return !existingHashes.has(trade.importHash);
       });
 
+      // Fallback duplicate-check against existing trade records (works even if older rows have no importHash).
+      const existingIdentityKeys = await TradeService.findExistingTradeIdentityKeys(notImportedByHash);
+      const newTradesToSave = notImportedByHash.filter((trade) => {
+        const identityKey = buildTradeIdentityKey(trade);
+        return !existingIdentityKeys.has(identityKey);
+      });
+
+      const skippedByHash = tradesToSave.length - notImportedByHash.length;
+      const skippedByIdentity = notImportedByHash.length - newTradesToSave.length;
+      const skippedAsAlreadyExisting = skippedByHash + skippedByIdentity;
+
       if (newTradesToSave.length === 0) {
-        toast("Keine neuen Trades gefunden (alles bereits importiert)");
+        toast("Keine neuen Trades gefunden (alles bereits vorhanden)");
         return;
       }
 
@@ -199,8 +225,11 @@ export default function AddTradesPage() {
       }
 
       toast.success(`${imported} Trades erfolgreich importiert!`);
-      if (tradesToSave.length > newTradesToSave.length) {
-        toast(`${tradesToSave.length - newTradesToSave.length} doppelte Trades übersprungen`);
+      if (duplicateRowsInFile > 0) {
+        toast(`${duplicateRowsInFile} doppelte Zeilen in der Datei übersprungen`);
+      }
+      if (skippedAsAlreadyExisting > 0) {
+        toast(`${skippedAsAlreadyExisting} bereits vorhandene Trades übersprungen`);
       }
       router.push("/dashboard");
     } catch (err) {

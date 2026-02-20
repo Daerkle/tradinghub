@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Progress } from "@/components/ui/progress";
@@ -17,6 +17,7 @@ import {
   Newspaper,
   ExternalLink,
   Zap,
+  TrendingUp,
 } from "lucide-react";
 import {
   TradeService,
@@ -26,6 +27,9 @@ import {
   PerformanceByDay,
   PerformanceBySymbol,
 } from "@/lib/models";
+import { translateNewsTag } from "@/lib/news-tags";
+import { ScannerSignals } from "@/components/scanner/scanner-signals";
+import { SectorRotationHeatmap } from "@/components/scanner/sector-rotation-heatmap";
 import {
   XAxis,
   YAxis,
@@ -136,29 +140,35 @@ export default function DashboardPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    async function loadData() {
+    let cancelled = false;
+
+    async function loadCore() {
       try {
         setIsLoading(true);
-        setIsFeedLoading(true);
-
-        const [coreResult, feedResult] = await Promise.allSettled([
-          Promise.all([
-            TradeService.getStats(),
-            TradeService.getRecentTrades(5),
-            TradeService.getEquityCurve(),
-            TradeService.getPerformanceByDay(),
-            TradeService.getPerformanceBySymbol(),
-          ]),
-          fetch("/api/scanner/catalyst-feed?stocks=12&news=20").then(async (res) => {
-            if (!res.ok) {
-              throw new Error(`Feed HTTP ${res.status}`);
-            }
-            return res.json() as Promise<CatalystFeedResponse>;
-          }),
+        const coreResult = await Promise.allSettled([
+          TradeService.getStats(),
+          TradeService.getRecentTrades(5),
+          TradeService.getEquityCurve(),
+          TradeService.getPerformanceByDay(),
+          TradeService.getPerformanceBySymbol(),
         ]);
 
-        if (coreResult.status === "fulfilled") {
-          const [statsData, tradesData, equityData, dayData, symbolData] = coreResult.value;
+        if (cancelled) return;
+
+        if (coreResult.every((r) => r.status === "fulfilled")) {
+          const [
+            statsData,
+            tradesData,
+            equityData,
+            dayData,
+            symbolData,
+          ] = coreResult.map((r) => (r as PromiseFulfilledResult<unknown>).value) as [
+            DashboardStats,
+            TradeData[],
+            EquityPoint[],
+            PerformanceByDay[],
+            PerformanceBySymbol[],
+          ];
           setStats(statsData);
           setRecentTrades(tradesData);
           setEquityCurve(equityData);
@@ -166,26 +176,40 @@ export default function DashboardPage() {
           setPerformanceBySymbol(symbolData);
           setError(null);
         } else {
-          console.error("Failed to load dashboard core data:", coreResult.reason);
+          console.error("Failed to load dashboard core data:", coreResult);
           setError("Daten konnten nicht geladen werden. Bitte später erneut versuchen.");
         }
-
-        if (feedResult.status === "fulfilled") {
-          setCatalystFeed(feedResult.value);
-        } else {
-          console.error("Failed to load catalyst feed:", feedResult.reason);
-          setCatalystFeed(null);
-        }
       } catch (err) {
-        console.error("Failed to load dashboard data:", err);
-        setError("Daten konnten nicht geladen werden. Bitte später erneut versuchen.");
+        console.error("Failed to load dashboard core data:", err);
+        if (!cancelled) {
+          setError("Daten konnten nicht geladen werden. Bitte später erneut versuchen.");
+        }
       } finally {
-        setIsLoading(false);
-        setIsFeedLoading(false);
+        if (!cancelled) setIsLoading(false);
       }
     }
 
-    loadData();
+    async function loadFeed() {
+      try {
+        setIsFeedLoading(true);
+        const res = await fetch("/api/scanner/catalyst-feed?stocks=12&news=20");
+        if (!res.ok) throw new Error(`Feed HTTP ${res.status}`);
+        const data = (await res.json()) as CatalystFeedResponse;
+        if (!cancelled) setCatalystFeed(data);
+      } catch (err) {
+        console.error("Failed to load catalyst feed:", err);
+        if (!cancelled) setCatalystFeed(null);
+      } finally {
+        if (!cancelled) setIsFeedLoading(false);
+      }
+    }
+
+    loadCore();
+    loadFeed();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   if (isLoading) {
@@ -459,6 +483,22 @@ export default function DashboardPage() {
                   <Newspaper className="h-3.5 w-3.5" />
                   Tages-News nach Catalyst
                 </div>
+                {catalystFeed.newsTagCounts && Object.keys(catalystFeed.newsTagCounts).length > 0 && (
+                  <div className="flex flex-wrap gap-1">
+                    {Object.entries(catalystFeed.newsTagCounts)
+                      .sort((a, b) => b[1] - a[1])
+                      .slice(0, 8)
+                      .map(([tag, count]) => (
+                        <Badge
+                          key={`tag-${tag}`}
+                          variant="secondary"
+                          className="text-[10px] px-1.5 py-0"
+                        >
+                          {translateNewsTag(tag)} {count}
+                        </Badge>
+                      ))}
+                  </div>
+                )}
                 {catalystFeed.news.length === 0 ? (
                   <div className="text-sm text-muted-foreground">Keine News von heute gefunden.</div>
                 ) : (
@@ -486,7 +526,7 @@ export default function DashboardPage() {
                         <div className="mt-1 flex flex-wrap gap-1">
                           {item.tags.slice(0, 3).map((tag) => (
                             <Badge key={`${item.link}-${tag}`} variant="outline" className="text-[10px] px-1.5 py-0">
-                              {tag}
+                              {translateNewsTag(tag)}
                             </Badge>
                           ))}
                         </div>
@@ -499,6 +539,23 @@ export default function DashboardPage() {
           )}
         </CardContent>
       </Card>
+
+      <Card className="animate-in slide-in-from-bottom-8 duration-500 delay-650">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-sm font-medium">
+            <TrendingUp className="h-4 w-4 text-emerald-400" />
+            Sektor-Rotation Heatmap
+          </CardTitle>
+          <CardDescription>
+            XL*-Sektoren relativ zu SPY (Rotation-Kontext fuer Breakouts und Setups).
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <SectorRotationHeatmap />
+        </CardContent>
+      </Card>
+
+      <ScannerSignals cacheOnly />
 
       {/* Main Charts Area */}
       <Tabs defaultValue="equity" className="space-y-4 animate-in fade-in duration-700 delay-700">

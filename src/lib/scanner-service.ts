@@ -13,11 +13,14 @@ import {
   type FinvizStockData
 } from "./finviz-service";
 import { getAllUSStockSymbols, getUSStockCount } from "./stock-universe";
+import { isSameMarketDay } from "./market-time";
 import {
   getCachedStockList,
   cacheStockList,
   getCachedScannerResults,
   cacheScannerResults,
+  getCachedSeededScannerResults,
+  cacheSeededScannerResults,
   getMultipleCachedFinvizData,
   cacheMultipleFinvizData,
   getCachedNews,
@@ -54,6 +57,16 @@ const FINVIZ_ENRICHMENT_LIMIT = 300;
 const SCAN_BATCH_SIZE = 8;
 const OPEN_UNIVERSE_MIN_SIZE = 80;
 let yahooRateLimitedUntil = 0;
+
+type ScannerResultsCacheKey = "full" | "seeded";
+
+type InflightScanEntry = {
+  startedAt: number;
+  promise: Promise<ScanResult & { fromCache: boolean; cacheStats?: { redisAvailable: boolean; memoryCacheSize: number } }>;
+};
+
+const inflightScans = new Map<ScannerResultsCacheKey, InflightScanEntry>();
+const MAX_INFLIGHT_SCAN_AGE_MS = 4 * 60 * 1000;
 
 function isYahooRateLimited(): boolean {
   return Date.now() < yahooRateLimitedUntil;
@@ -103,6 +116,9 @@ export interface StockData {
   distanceFrom200SMA: number;
   distanceFrom52WkHigh: number;
   distanceFrom52WkLow: number;
+  // Breakout pivots (derived, excludes "today")
+  prior20DayHigh?: number;
+  prior20DayLow?: number;
   // EMAs
   ema10: number;
   ema20: number;
@@ -703,7 +719,6 @@ export function buildStockFromFinvizData(
       dollarVolume: price * avgVolume,
     },
     scanTypes,
-    chartData: [],
     shortFloat: finvizData.shortFloat,
     insiderOwn: finvizData.insiderOwn,
     instOwn: finvizData.instOwn,
@@ -879,7 +894,6 @@ export function buildStockFromYahooQuoteSnapshot(
       dollarVolume: price * avgVolume,
     },
     scanTypes,
-    chartData: [],
   };
 
   const withCatalyst = applyCatalystMetrics(baseStock);
@@ -1055,7 +1069,6 @@ function buildStockFromStooqSnapshot(
       dollarVolume: price * avgVolume,
     },
     scanTypes,
-    chartData: [],
   };
 
   return applyCatalystMetrics(baseStock);
@@ -1082,7 +1095,17 @@ async function fetchSingleStooqSnapshot(symbol: string): Promise<{ symbol: strin
     }
 
     const csv = (await response.text()).trim();
-    const line = csv.split("\n").find((entry) => entry.trim().length > 0);
+    const lines = csv
+      .split("\n")
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0);
+    if (lines.length === 0) return null;
+
+    const expectedPrefix = `${symbol.toUpperCase()}.US,`;
+    const line =
+      lines.find((entry) => entry.toUpperCase().startsWith(expectedPrefix)) ||
+      lines.find((entry, idx) => idx > 0 && !entry.toLowerCase().startsWith("symbol,")) ||
+      null;
     if (!line) return null;
 
     const parts = line.split(",");
@@ -1142,31 +1165,116 @@ export async function fetchStooqSnapshotStocks(
 
 // Get SPY performance for RS calculation
 export async function getSPYPerformance(): Promise<{ m1: number; m3: number; m6: number }> {
-  try {
-    const historical = await withTimeout(
-      yahooFinance.chart("SPY", {
-        period1: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000),
-        period2: new Date(),
-        interval: "1d",
-      }),
-      YAHOO_TIMEOUT_MS,
-      "SPY",
-    );
+  type SpyPerformance = { m1: number; m3: number; m6: number };
+  const SPY_PERF_CACHE_TTL_MS = 15 * 60 * 1000;
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const chartData = historical as any;
-    const closes = chartData.quotes.map((q: { close?: number }) => q.close || 0).filter((c: number) => c > 0);
-    const currentPrice = closes[closes.length - 1];
-
-    return {
-      m1: ((currentPrice / closes[closes.length - 21]) - 1) * 100,
-      m3: ((currentPrice / closes[closes.length - 63]) - 1) * 100,
-      m6: closes.length >= 126 ? ((currentPrice / closes[closes.length - 126]) - 1) * 100 : 0,
-    };
-  } catch {
-    return { m1: 0, m3: 0, m6: 0 };
+  // eslint-disable-next-line @typescript-eslint/no-use-before-define
+  if (spyPerformanceCache && Date.now() - spyPerformanceCache.fetchedAt < SPY_PERF_CACHE_TTL_MS) {
+    return spyPerformanceCache.value;
   }
+
+  const safePerf = (closes: number[], lookbackDays: number): number => {
+    const n = closes.length;
+    if (n <= lookbackDays) return 0;
+    const current = closes[n - 1];
+    const past = closes[n - 1 - lookbackDays];
+    if (!Number.isFinite(current) || !Number.isFinite(past) || current <= 0 || past <= 0) return 0;
+    return ((current / past) - 1) * 100;
+  };
+
+  const compute = (closes: number[]): SpyPerformance => ({
+    m1: safePerf(closes, 21),
+    m3: safePerf(closes, 63),
+    m6: safePerf(closes, 126),
+  });
+
+  const fetchStooqDailyCloses = async (symbol: string): Promise<number[] | null> => {
+    const stooqSymbol = `${symbol.toLowerCase()}.us`;
+    const url = `https://stooq.com/q/d/l/?s=${encodeURIComponent(stooqSymbol)}&i=d`;
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), STOOQ_TIMEOUT_MS);
+
+    try {
+      const response = await fetch(url, {
+        signal: controller.signal,
+        headers: {
+          "User-Agent": "Mozilla/5.0",
+          "Accept": "text/csv,*/*;q=0.8",
+        },
+      });
+
+      if (!response.ok) return null;
+
+      const csv = (await response.text()).trim();
+      const lines = csv
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0);
+      if (lines.length < 3) return null;
+
+      const header = lines[0].split(",").map((h) => h.trim().toLowerCase());
+      const closeIndex = header.indexOf("close");
+      const idx = closeIndex >= 0 ? closeIndex : 4;
+
+      const closes: number[] = [];
+      for (let i = 1; i < lines.length; i++) {
+        const parts = lines[i].split(",");
+        const close = Number.parseFloat(parts[idx] || "");
+        if (Number.isFinite(close) && close > 0) closes.push(close);
+      }
+
+      return closes.length >= 30 ? closes : null;
+    } catch {
+      return null;
+    } finally {
+      clearTimeout(timeout);
+    }
+  };
+
+  let closes: number[] | null = null;
+
+  if (!isYahooRateLimited()) {
+    try {
+      const historical = await withTimeout(
+        yahooFinance.chart("SPY", {
+          period1: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000),
+          period2: new Date(),
+          interval: "1d",
+        }),
+        YAHOO_TIMEOUT_MS,
+        "SPY",
+      );
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const chartData = historical as any;
+      const quotes = Array.isArray(chartData?.quotes) ? chartData.quotes : [];
+      closes = quotes
+        .map((q: { close?: number }) => q.close || 0)
+        .filter((c: number) => Number.isFinite(c) && c > 0);
+
+      if (!closes || closes.length < 63) {
+        closes = null;
+      }
+    } catch (error) {
+      const message = String(error ?? "");
+      if (message.includes("429") || message.toLowerCase().includes("rate")) {
+        activateYahooCooldown("SPY rate limit");
+      }
+      closes = null;
+    }
+  }
+
+  if (!closes) {
+    closes = await fetchStooqDailyCloses("SPY");
+  }
+
+  const value = closes ? compute(closes) : { m1: 0, m3: 0, m6: 0 };
+  spyPerformanceCache = { fetchedAt: Date.now(), value };
+  return value;
 }
+
+let spyPerformanceCache: { fetchedAt: number; value: { m1: number; m3: number; m6: number } } | null = null;
 
 // Quote type definition for yahoo-finance2 chart data
 interface YahooQuote {
@@ -1327,15 +1435,16 @@ export async function fetchStockData(symbol: string, spyPerformance?: { m1: numb
     if (momentum6M >= 30) scanTypes.push("6M Momentum");
     if (isQullaSetup) scanTypes.push("Qullamaggie");
 
-    // Chart data for last 100 days
-    const chartData: CandleData[] = quotes.slice(-100).map(q => ({
-      time: new Date(q.date).toISOString().split('T')[0],
-      open: q.open || 0,
-      high: q.high || 0,
-      low: q.low || 0,
-      close: q.close || 0,
-      volume: q.volume || 0,
-    }));
+    // Breakout pivots: prior 20 sessions, excluding the current candle.
+    const priorWindow = quotes.slice(-21, -1);
+    const priorHighs = priorWindow
+      .map((q) => q.high || q.close || 0)
+      .filter((v) => Number.isFinite(v) && v > 0);
+    const priorLows = priorWindow
+      .map((q) => q.low || q.close || 0)
+      .filter((v) => Number.isFinite(v) && v > 0);
+    const prior20DayHigh = priorHighs.length > 0 ? Math.max(...priorHighs) : 0;
+    const prior20DayLow = priorLows.length > 0 ? Math.min(...priorLows) : 0;
 
     const baseStock: StockData = {
       symbol,
@@ -1358,6 +1467,8 @@ export async function fetchStockData(symbol: string, spyPerformance?: { m1: numb
       distanceFrom200SMA: sma200 > 0 ? ((currentPrice / sma200) - 1) * 100 : 0,
       distanceFrom52WkHigh: ((currentPrice / high52Wk) - 1) * 100,
       distanceFrom52WkLow: ((currentPrice / low52Wk) - 1) * 100,
+      prior20DayHigh,
+      prior20DayLow,
       ema10,
       ema20,
       ema50,
@@ -1403,7 +1514,6 @@ export async function fetchStockData(symbol: string, spyPerformance?: { m1: numb
         dollarVolume,
       },
       scanTypes,
-      chartData,
     };
 
     const stockWithCatalyst = applyCatalystMetrics(baseStock);
@@ -1426,15 +1536,6 @@ export async function fetchStockData(symbol: string, spyPerformance?: { m1: numb
   }
 }
 
-// Fetch news for a stock
-function isSameUtcDay(date: Date, reference: Date = new Date()): boolean {
-  return (
-    date.getUTCFullYear() === reference.getUTCFullYear() &&
-    date.getUTCMonth() === reference.getUTCMonth() &&
-    date.getUTCDate() === reference.getUTCDate()
-  );
-}
-
 function selectNewsItems(
   items: NewsItem[],
   options: { todayOnly?: boolean; maxItems?: number } = {}
@@ -1445,7 +1546,7 @@ function selectNewsItems(
     .sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime());
 
   const filtered = todayOnly
-    ? normalized.filter((item) => isSameUtcDay(item.publishedAt))
+    ? normalized.filter((item) => isSameMarketDay(item.publishedAt))
     : normalized;
 
   return filtered.slice(0, Math.max(1, Math.min(maxItems, 50)));
@@ -1459,6 +1560,20 @@ const NEWS_TAG_RULES: Array<{ tag: string; regex: RegExp }> = [
   { tag: "Contract", regex: /\b(contract|order|deal|partnership|agreement)\b/i },
   { tag: "Legal", regex: /\b(lawsuit|investigation|sec|doj|settlement|probe)\b/i },
   { tag: "Macro", regex: /\b(inflation|fed|rate|cpi|gdp|tariff|policy)\b/i },
+  { tag: "AI", regex: /\b(ai|artificial intelligence|gpu|data\s*center|llm|chatgpt|openai)\b/i },
+  { tag: "Semiconductors", regex: /\b(semiconductor|chip|foundry|wafer|gpu|cpu|tsmc|asml|nvidia|nvda|amd|intel|intc|qualcomm)\b/i },
+  { tag: "Crypto", regex: /\b(bitcoin|btc|crypto|ethereum|eth|blockchain|token|spot\s*etf)\b/i },
+  { tag: "Energy", regex: /\b(oil|crude|wti|brent|gas|lng|opec|refinery|energy)\b/i },
+  { tag: "Defense", regex: /\b(defense|pentagon|nato|military|missile|drone|contract\s*award)\b/i },
+  { tag: "EV", regex: /\b(ev|electric vehicle|battery|charging|tesla)\b/i },
+  { tag: "Biotech", regex: /\b(biotech|fda|clinical|trial|phase\s?[1-4]|drug)\b/i },
+  { tag: "China", regex: /\b(china|chinese|beijing|hong\s*kong)\b/i },
+  { tag: "Rates", regex: /\b(yield|treasury|bond|rates?|interest rate)\b/i },
+  { tag: "Dividend", regex: /\b(dividend|special dividend)\b/i },
+  { tag: "Buyback", regex: /\b(buyback|repurchase|share repurchase)\b/i },
+  { tag: "Insider", regex: /\b(insider|insider trading|sec form 4|form 4)\b/i },
+  { tag: "Guidance", regex: /\b(outlook|forecast|raises? guidance|cuts? guidance)\b/i },
+  { tag: "IPO", regex: /\b(ipo|public offering|secondary offering|follow-on offering)\b/i },
 ];
 
 function deriveNewsTags(title: string): string[] {
@@ -1721,6 +1836,18 @@ function mergeFinvizData(stock: StockData, finvizData: FinvizStockData | undefin
     analystRating: finvizData.analystRecom || stock.analystRating,
   };
 
+  const needsAdrBackfill = !Number.isFinite(merged.adrPercent) || merged.adrPercent <= 0;
+  if (needsAdrBackfill) {
+    const priceForAdr = merged.price > 0 ? merged.price : (finvizData.price ?? 0);
+    const finvizAdr =
+      (finvizData.atr ?? 0) > 0 && priceForAdr > 0
+        ? ((finvizData.atr || 0) / priceForAdr) * 100
+        : (finvizData.volatilityMonth ?? finvizData.volatilityWeek ?? 0);
+    if (Number.isFinite(finvizAdr) && finvizAdr > 0) {
+      merged.adrPercent = finvizAdr;
+    }
+  }
+
   return applyCatalystMetrics(merged);
 }
 
@@ -1948,18 +2075,28 @@ export async function runFullScanWithCache(
     useCache?: boolean;
     forceRefresh?: boolean;
     symbols?: string[];
+    cacheKey?: ScannerResultsCacheKey;
   } = {}
 ): Promise<ScanResult & { fromCache: boolean; cacheStats?: { redisAvailable: boolean; memoryCacheSize: number } }> {
   const {
     useCache = true,
     forceRefresh = false,
     symbols: providedSymbols,
+    cacheKey = "full",
   } = options;
   let staleCachedResults: ScanResult | null = null;
 
+  const getCache = <T,>(): Promise<T | null> => {
+    return cacheKey === "seeded" ? getCachedSeededScannerResults<T>() : getCachedScannerResults<T>();
+  };
+
+  const setCache = (results: unknown): Promise<boolean> => {
+    return cacheKey === "seeded" ? cacheSeededScannerResults(results) : cacheScannerResults(results);
+  };
+
   // Check for cached results (unless force refresh)
   if (useCache && !forceRefresh) {
-    const cachedResults = await getCachedScannerResults<ScanResult>();
+    const cachedResults = await getCache<ScanResult>();
     if (cachedResults && cachedResults.stocks.length > 0) {
       // Check if cache is still fresh (5 minutes)
       const cacheAge = Date.now() - new Date(cachedResults.scanTime).getTime();
@@ -1982,55 +2119,100 @@ export async function runFullScanWithCache(
     }
   }
 
+  // Singleflight: avoid duplicate scans in parallel (same cache key)
+  const now = Date.now();
+  const inflight = inflightScans.get(cacheKey);
+  if (inflight && now - inflight.startedAt < MAX_INFLIGHT_SCAN_AGE_MS) {
+    try {
+      return await inflight.promise;
+    } catch {
+      // fall through; start a new scan
+    }
+  }
+
   // Get symbols to scan
   const symbols = providedSymbols || await getStockSymbols(forceRefresh);
 
-  // Run the actual scan
-  console.log(`Running full scan for ${symbols.length} symbols...`);
-  const results = await runFullScan(symbols);
+  const runPromise = (async () => {
+    // Run the actual scan
+    console.log(`Running full scan for ${symbols.length} symbols...`);
+    const results = await runFullScan(symbols);
 
-  if (results.stocks.length === 0 && staleCachedResults && staleCachedResults.stocks.length > 0) {
-    console.warn(`Fresh scan returned 0 stocks, falling back to stale cache (${staleCachedResults.stocks.length})`);
+    if (results.stocks.length === 0 && staleCachedResults && staleCachedResults.stocks.length > 0) {
+      console.warn(`Fresh scan returned 0 stocks, falling back to stale cache (${staleCachedResults.stocks.length})`);
+      const stats = await getCacheStats();
+      const normalizedStocks = staleCachedResults.stocks.map((stock) => applyCatalystMetrics({
+        ...stock,
+        catalystScore: stock.catalystScore ?? 0,
+        catalystSignals: Array.isArray(stock.catalystSignals) ? stock.catalystSignals : [],
+      }));
+      return {
+        ...staleCachedResults,
+        stocks: normalizedStocks,
+        fromCache: true,
+        cacheStats: stats,
+      };
+    }
+
+    // Cache the results
+    if (useCache && results.stocks.length > 0) {
+      await setCache(results);
+      console.log(`Cached scanner results: ${results.stocks.length} stocks`);
+    } else if (results.stocks.length === 0) {
+      console.warn("Scan produced 0 stocks, skipping cache overwrite");
+    }
+
     const stats = await getCacheStats();
-    const normalizedStocks = staleCachedResults.stocks.map((stock) => applyCatalystMetrics({
-      ...stock,
-      catalystScore: stock.catalystScore ?? 0,
-      catalystSignals: Array.isArray(stock.catalystSignals) ? stock.catalystSignals : [],
-    }));
     return {
-      ...staleCachedResults,
-      stocks: normalizedStocks,
-      fromCache: true,
+      ...results,
+      fromCache: false,
       cacheStats: stats,
     };
-  }
+  })();
 
-  // Cache the results
-  if (useCache && results.stocks.length > 0) {
-    await cacheScannerResults(results);
-    console.log(`Cached scanner results: ${results.stocks.length} stocks`);
-  } else if (results.stocks.length === 0) {
-    console.warn("Scan produced 0 stocks, skipping cache overwrite");
+  inflightScans.set(cacheKey, { startedAt: now, promise: runPromise });
+  try {
+    return await runPromise;
+  } finally {
+    const current = inflightScans.get(cacheKey);
+    if (current?.promise === runPromise) {
+      inflightScans.delete(cacheKey);
+    }
   }
-
-  const stats = await getCacheStats();
-  return {
-    ...results,
-    fromCache: false,
-    cacheStats: stats,
-  };
 }
 
 // Fetch Finviz data with caching
 export async function fetchFinvizDataWithCache(
   symbols: string[]
 ): Promise<Map<string, FinvizStockData>> {
+  const normalizedSymbols = symbols.map((s) => s.toUpperCase());
+
   // Check cache for already fetched data
-  const cachedData = await getMultipleCachedFinvizData<FinvizStockData>(symbols);
-  const uncachedSymbols = symbols.filter((s) => !cachedData.has(s));
+  const cachedData = await getMultipleCachedFinvizData<FinvizStockData>(normalizedSymbols);
+
+  // If cached entries were created before our parser fix, they may miss ATR/Volatility.
+  // Treat those as stale so we refetch and can compute ADR%.
+  let staleCount = 0;
+  for (const symbol of normalizedSymbols) {
+    const data = cachedData.get(symbol);
+    if (!data) continue;
+    const atr = data.atr ?? 0;
+    const volMonth = data.volatilityMonth ?? 0;
+    const volWeek = data.volatilityWeek ?? 0;
+    const hasAdrInputs =
+      (Number.isFinite(atr) && atr > 0) ||
+      (Number.isFinite(volMonth) && volMonth > 0) ||
+      (Number.isFinite(volWeek) && volWeek > 0);
+    if (!hasAdrInputs) {
+      cachedData.delete(symbol);
+      staleCount += 1;
+    }
+  }
+
+  const uncachedSymbols = normalizedSymbols.filter((s) => !cachedData.has(s));
 
   console.log(
-    `Finviz cache: ${cachedData.size} cached, ${uncachedSymbols.length} to fetch`
+    `Finviz cache: ${cachedData.size} cached, ${staleCount} stale, ${uncachedSymbols.length} to fetch`
   );
 
   // Fetch uncached data

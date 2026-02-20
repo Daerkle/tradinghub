@@ -89,6 +89,7 @@ function mergeFinvizData(stock: StockData, finvizData: FinvizStockData | null): 
 
   // If stock has no real momentum data (Stooq fallback), use Finviz performance metrics
   const needsPerformanceData = stock.momentum1M === 0 && stock.momentum3M === 0 && stock.momentum6M === 0;
+  const needsAdrBackfill = !Number.isFinite(stock.adrPercent) || stock.adrPercent <= 0;
 
   const merged: StockData = {
     ...stock,
@@ -128,6 +129,17 @@ function mergeFinvizData(stock: StockData, finvizData: FinvizStockData | null): 
     if (finvizData.industry) merged.industry = finvizData.industry;
     // Recalculate EP with real volume ratio
     merged.isEP = merged.gapPercent >= 5 && merged.volumeRatio >= 1.5;
+  }
+
+  if (needsAdrBackfill) {
+    const priceForAdr = merged.price > 0 ? merged.price : (finvizData.price ?? 0);
+    const finvizAdr =
+      (finvizData.atr ?? 0) > 0 && priceForAdr > 0
+        ? ((finvizData.atr || 0) / priceForAdr) * 100
+        : (finvizData.volatilityMonth ?? finvizData.volatilityWeek ?? 0);
+    if (Number.isFinite(finvizAdr) && finvizAdr > 0) {
+      merged.adrPercent = finvizAdr;
+    }
   }
 
   return applyCatalystMetrics(merged);

@@ -22,6 +22,7 @@ import Link from "next/link";
 const pageTitles: Record<string, string> = {
   "/dashboard": "Dashboard",
   "/daily": "Täglich",
+  "/correction": "Korrektur & Sentiment",
   "/calendar": "Kalender",
   "/screenshots": "Screenshots",
   "/videos": "Videos",

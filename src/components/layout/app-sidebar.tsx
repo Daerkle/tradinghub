@@ -208,6 +208,14 @@ export function AppSidebar() {
                 </SidebarMenuButton>
               </SidebarMenuItem>
               <SidebarMenuItem>
+                <SidebarMenuButton asChild tooltip="Korrektur" isActive={pathname === "/correction"}>
+                  <Link href="/correction">
+                    <BarChart3 className="h-4 w-4" />
+                    <span>Korrektur</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
                 <SidebarMenuButton asChild tooltip="Browser" isActive={pathname === "/database"}>
                   <Link href="/database">
                     <Database className="h-4 w-4" />
