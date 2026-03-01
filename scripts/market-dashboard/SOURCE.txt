@@ -1,0 +1,3 @@
+Source repository: https://github.com/traderwillhu/market_dashboard
+Cloned on: 2026-03-01
+Contents imported for local Market Dashboard integration in TradingHub.

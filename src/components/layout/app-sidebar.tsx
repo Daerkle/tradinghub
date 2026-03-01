@@ -208,6 +208,14 @@ export function AppSidebar() {
                 </SidebarMenuButton>
               </SidebarMenuItem>
               <SidebarMenuItem>
+                <SidebarMenuButton asChild tooltip="Market Dashboard" isActive={pathname === "/market-dashboard"}>
+                  <Link href="/market-dashboard">
+                    <BarChart3 className="h-4 w-4" />
+                    <span>Market Dashboard</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
                 <SidebarMenuButton asChild tooltip="Korrektur" isActive={pathname === "/correction"}>
                   <Link href="/correction">
                     <BarChart3 className="h-4 w-4" />

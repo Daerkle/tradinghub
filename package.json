@@ -12,7 +12,8 @@
     "db:studio": "drizzle-kit studio",
     "db:migrate": "npx tsx src/lib/database/migrate.ts",
     "up": "./scripts/start-all.sh",
-    "down": "docker compose down"
+    "down": "docker compose down",
+    "market-dashboard:build-data": "python3 scripts/market-dashboard/build_data.py --out-dir public/market-dashboard/data"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

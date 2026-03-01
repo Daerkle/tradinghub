@@ -7,6 +7,7 @@ import {
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { translateNewsTag } from "@/lib/news-tags";
 import { StockChart } from "@/components/scanner/stock-chart";
@@ -112,16 +113,15 @@ interface StockDetailPanelProps {
 }
 
 function ChartSection({ stock }: { stock: StockData }) {
-  const hasChartData = stock.chartData && stock.chartData.length > 0;
-  const [chartData, setChartData] = useState(stock.chartData || []);
-  const [loading, setLoading] = useState(false);
+  const [chartData, setChartData] = useState(() => stock.chartData || []);
   const [failed, setFailed] = useState(false);
+  const [chartMode, setChartMode] = useState<"journal" | "tradingview">("journal");
+  const loading = chartMode === "journal" && !failed && chartData.length === 0;
 
   useEffect(() => {
-    if (hasChartData || failed) return;
+    if (chartData.length > 0 || failed) return;
 
     let cancelled = false;
-    setLoading(true);
 
     fetch(`/api/scanner/chart/${encodeURIComponent(stock.symbol)}`)
       .then((res) => {
@@ -133,37 +133,94 @@ function ChartSection({ stock }: { stock: StockData }) {
           setChartData(data.chartData);
         } else if (!cancelled) {
           setFailed(true);
+          setChartMode("tradingview");
         }
       })
       .catch(() => {
-        if (!cancelled) setFailed(true);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          setFailed(true);
+          setChartMode("tradingview");
+        }
       });
 
     return () => { cancelled = true; };
-  }, [stock.symbol, hasChartData, failed]);
+  }, [stock.symbol, chartData.length, failed]);
 
-  if (loading) {
-    return (
-      <div className="h-[250px] sm:h-[350px] flex items-center justify-center bg-muted rounded-md">
-        <Skeleton className="h-full w-full rounded-md" />
-      </div>
-    );
-  }
-
-  if (chartData.length > 0) {
-    return (
-      <div className="h-[250px] sm:h-[350px]">
-        <StockChart data={chartData} symbol={stock.symbol} height={250} />
-      </div>
-    );
-  }
+  const tradingViewSrc = `https://s.tradingview.com/widgetembed/?frameElementId=tradingview_detail_${stock.symbol.replace(
+    /[^a-zA-Z0-9_]/g,
+    "_"
+  )}&symbol=${encodeURIComponent(
+    stock.symbol
+  )}&interval=D&range=12M&theme=dark&style=1&locale=de_DE&enable_publishing=false&hide_top_toolbar=false&hide_legend=false&hide_side_toolbar=false&allow_symbol_change=true&save_image=false&withdateranges=true&show_popup_button=true`;
 
   return (
-    <div className="h-[250px] sm:h-[350px] flex items-center justify-center bg-muted rounded-md">
-      <span className="text-muted-foreground">Keine Chart-Daten verfugbar</span>
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="inline-flex rounded-md border p-0.5 bg-muted/20">
+          <Button
+            type="button"
+            size="sm"
+            variant={chartMode === "journal" ? "default" : "ghost"}
+            className="h-7 px-2 text-xs"
+            onClick={() => setChartMode("journal")}
+          >
+            Journal
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant={chartMode === "tradingview" ? "default" : "ghost"}
+            className="h-7 px-2 text-xs"
+            onClick={() => setChartMode("tradingview")}
+          >
+            TradingView
+          </Button>
+        </div>
+        <a
+          href={`https://www.tradingview.com/chart/?symbol=${encodeURIComponent(stock.symbol)}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-xs text-muted-foreground underline hover:text-foreground"
+        >
+          Extern öffnen
+        </a>
+      </div>
+
+      {chartMode === "journal" && (
+        <>
+          {loading && (
+            <div className="h-[250px] sm:h-[350px] flex items-center justify-center bg-muted rounded-md">
+              <Skeleton className="h-full w-full rounded-md" />
+            </div>
+          )}
+
+          {!loading && chartData.length > 0 && (
+            <div className="h-[250px] sm:h-[350px]">
+              <StockChart data={chartData} symbol={stock.symbol} height={250} />
+            </div>
+          )}
+
+          {!loading && chartData.length === 0 && (
+            <div className="h-[250px] sm:h-[350px] flex items-center justify-center bg-muted rounded-md px-4 text-center">
+              <span className="text-muted-foreground">
+                Keine Journal-Chart-Daten verfügbar. Bitte TradingView nutzen.
+              </span>
+            </div>
+          )}
+        </>
+      )}
+
+      {chartMode === "tradingview" && (
+        <div className="h-[250px] sm:h-[350px] overflow-hidden rounded-md border bg-black">
+          <iframe
+            title={`TradingView ${stock.symbol}`}
+            src={tradingViewSrc}
+            className="h-full w-full border-0"
+            loading="lazy"
+            sandbox="allow-scripts allow-same-origin"
+          />
+        </div>
+      )}
     </div>
   );
 }
@@ -177,7 +234,7 @@ export function StockDetailPanel({ stock }: StockDetailPanelProps) {
             <BarChart3 className="h-4 w-4" />
             Chart (100 Tage)
           </h4>
-          <ChartSection stock={stock} />
+          <ChartSection key={stock.symbol} stock={stock} />
         </div>
 
         <div className="space-y-4">
@@ -199,6 +256,17 @@ export function StockDetailPanel({ stock }: StockDetailPanelProps) {
                   {formatNumber(stock.setupScore, 0)}%
                 </span>
               </div>
+              {stock.stockbeeScore !== undefined && (
+                <div className="flex items-center justify-between">
+                  <span className="text-sm">Stockbee Score</span>
+                  <span className={cn(
+                    "font-bold text-lg",
+                    stock.stockbeeScore >= 80 ? "text-white" : stock.stockbeeScore >= 65 ? "text-zinc-300" : "text-zinc-500"
+                  )}>
+                    {formatNumber(stock.stockbeeScore, 0)}%
+                  </span>
+                </div>
+              )}
               <div className="flex items-center justify-between">
                 <span className="text-sm">Catalyst Score</span>
                 <span className={cn(
@@ -208,6 +276,22 @@ export function StockDetailPanel({ stock }: StockDetailPanelProps) {
                   {formatNumber(stock.catalystScore, 0)}
                 </span>
               </div>
+              {stock.stockbee && (
+                <div className="flex flex-wrap gap-1 pt-1">
+                  {stock.stockbee.isEpisodicPivot && <Badge variant="secondary" className="text-[10px] px-1.5 py-0">Stockbee EP</Badge>}
+                  {stock.stockbee.isMomentumBurst && <Badge variant="secondary" className="text-[10px] px-1.5 py-0">Momentum Burst</Badge>}
+                  {stock.stockbee.isRangeExpansionBreakout && <Badge variant="secondary" className="text-[10px] px-1.5 py-0">Range Breakout</Badge>}
+                  {stock.stockbee.qullaAlignment?.alignsWithQullamaggie && (
+                    <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
+                      Qulla Align: {[
+                        stock.stockbee.qullaAlignment.month1 ? "1M" : null,
+                        stock.stockbee.qullaAlignment.month3 ? "3M" : null,
+                        stock.stockbee.qullaAlignment.month6 ? "6M" : null,
+                      ].filter(Boolean).join("/")}
+                    </Badge>
+                  )}
+                </div>
+              )}
               {stock.catalystSignals && stock.catalystSignals.length > 0 && (
                 <div className="flex flex-wrap gap-1 pt-1">
                   {stock.catalystSignals.slice(0, 5).map((signal) => (
