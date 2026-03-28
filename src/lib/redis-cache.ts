@@ -445,6 +445,54 @@ export async function unifiedCacheSet<T>(
   return redisSuccess;
 }
 
+export interface SmartCacheEnvelope<T> {
+  data: T;
+  cachedAt: number;
+  freshUntil: number;
+  staleUntil: number;
+}
+
+export interface SmartCacheResult<T> {
+  data: T | null;
+  isStale: boolean;
+  cachedAt: number | null;
+}
+
+export async function smartCacheSet<T>(
+  key: string,
+  value: T,
+  options: {
+    freshTtlSeconds: number;
+    staleTtlSeconds: number;
+  }
+): Promise<boolean> {
+  const now = Date.now();
+  const envelope: SmartCacheEnvelope<T> = {
+    data: value,
+    cachedAt: now,
+    freshUntil: now + options.freshTtlSeconds * 1000,
+    staleUntil: now + options.staleTtlSeconds * 1000,
+  };
+  return unifiedCacheSet(key, envelope, options.staleTtlSeconds);
+}
+
+export async function smartCacheGet<T>(key: string): Promise<SmartCacheResult<T>> {
+  const entry = await unifiedCacheGet<SmartCacheEnvelope<T>>(key);
+  if (!entry) {
+    return {
+      data: null,
+      isStale: true,
+      cachedAt: null,
+    };
+  }
+
+  return {
+    data: entry.data,
+    isStale: Date.now() > entry.freshUntil,
+    cachedAt: entry.cachedAt,
+  };
+}
+
 // Get cache stats
 export async function getCacheStats(): Promise<{
   redisAvailable: boolean;

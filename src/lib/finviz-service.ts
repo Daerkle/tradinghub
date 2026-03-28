@@ -61,15 +61,25 @@ export interface FinvizStockData {
   sma20?: number;            // Price vs SMA20 %
   sma50?: number;            // Price vs SMA50 %
   sma200?: number;           // Price vs SMA200 %
+  distanceFrom52WkHigh?: number; // Price vs 52W High %
+  distanceFrom52WkLow?: number;  // Price vs 52W Low %
   rsi14?: number;            // RSI 14
 }
 
 // Parse percentage string to number
 function parsePercent(value: string | undefined): number | undefined {
   if (!value || value === "-" || value === "") return undefined;
-  const cleaned = value.replace("%", "").trim();
+  const normalized = value.replace(/−/g, "-");
+  const percentMatches = Array.from(normalized.matchAll(/([-+]?\d+(?:\.\d+)?)\s*%/g));
+  if (percentMatches.length > 0) {
+    const lastMatch = percentMatches[percentMatches.length - 1]?.[1];
+    const parsed = lastMatch !== undefined ? parseFloat(lastMatch) : NaN;
+    return Number.isNaN(parsed) ? undefined : parsed;
+  }
+
+  const cleaned = normalized.replace("%", "").trim();
   const num = parseFloat(cleaned);
-  return isNaN(num) ? undefined : num;
+  return Number.isNaN(num) ? undefined : num;
 }
 
 // Parse number string
@@ -90,6 +100,25 @@ function parseNumber(value: string | undefined): number | undefined {
   }
   const num = parseFloat(cleaned);
   return isNaN(num) ? undefined : num * multiplier;
+}
+
+function parse52WDistance(
+  value: string | undefined,
+  currentPrice: number | undefined
+): number | undefined {
+  if (!value || value === "-" || value === "") return undefined;
+
+  // Some Finviz layouts expose 52W High/Low as percent distance, others as absolute price.
+  if (value.includes("%")) {
+    return parsePercent(value);
+  }
+
+  const level = parseNumber(value);
+  if (!Number.isFinite(level) || !Number.isFinite(currentPrice) || (currentPrice ?? 0) <= 0) {
+    return undefined;
+  }
+
+  return ((currentPrice as number) / (level as number) - 1) * 100;
 }
 
 // Extract value from HTML table row
@@ -183,10 +212,14 @@ export async function fetchFinvizData(symbol: string): Promise<FinvizStockData |
     const sectorMatch = html.match(/href="screener\.ashx\?v=\d+&(?:amp;)?f=sec_[^"]*"[^>]*class="tab-link"[^>]*>([^<]+)</i);
     const industryMatch = html.match(/href="screener\.ashx\?v=\d+&(?:amp;)?f=ind_[^"]*"[^>]*class="tab-link"[^>]*>([^<]+)</i);
 
+    const price = parseNumber(extractValue(html, "Price"));
+    const value52WHigh = extractValue(html, "52W High");
+    const value52WLow = extractValue(html, "52W Low");
+
     return {
       ticker: symbol.toUpperCase(),
       // Core quote data
-      price: parseNumber(extractValue(html, "Price")),
+      price,
       changePercent: parsePercent(extractValue(html, "Change")),
       volume: parseNumber(extractValue(html, "Volume")),
       avgVolume: parseNumber(extractValue(html, "Avg Volume")),
@@ -243,6 +276,8 @@ export async function fetchFinvizData(symbol: string): Promise<FinvizStockData |
       sma20: parsePercent(extractValue(html, "SMA20")),
       sma50: parsePercent(extractValue(html, "SMA50")),
       sma200: parsePercent(extractValue(html, "SMA200")),
+      distanceFrom52WkHigh: parse52WDistance(value52WHigh, price),
+      distanceFrom52WkLow: parse52WDistance(value52WLow, price),
       rsi14: parseNumber(extractValue(html, "RSI (14)")),
     };
   } catch (error) {

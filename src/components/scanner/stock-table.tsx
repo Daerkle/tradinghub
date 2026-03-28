@@ -1,8 +1,7 @@
 "use client";
 
 import {
-  ChevronDown, ChevronRight, Zap, BarChart3, ExternalLink,
-  ArrowUpRight, ArrowDownRight,
+  ChevronDown, ChevronRight, BarChart3, ExternalLink,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -33,6 +32,13 @@ interface StockRowProps {
 }
 
 function StockRow({ stock, isExpanded, onToggle, showEpColumns, compareMode, isSelected, onSelectChange }: StockRowProps) {
+  const alignment = stock.stockbee?.qullaAlignment;
+  const alignedFrames = [
+    alignment?.month1 ? "1M" : null,
+    alignment?.month3 ? "3M" : null,
+    alignment?.month6 ? "6M" : null,
+  ].filter((frame): frame is string => Boolean(frame));
+
   return (
     <>
       <TableRow className="cursor-pointer hover:bg-zinc-800/50 text-xs font-mono" onClick={onToggle}>
@@ -50,6 +56,12 @@ function StockRow({ stock, isExpanded, onToggle, showEpColumns, compareMode, isS
             <span className="font-bold text-sm text-foreground">{stock.symbol}</span>
             {stock.isEP && <Badge variant="secondary" className="text-[10px] px-1 py-0 bg-zinc-800 text-zinc-300 border border-zinc-700">EP</Badge>}
             {stock.isQullaSetup && <Badge variant="secondary" className="text-[10px] px-1 py-0 bg-zinc-800 text-zinc-300 border border-zinc-700">Q</Badge>}
+            {stock.isStockbeeSetup && <Badge variant="secondary" className="text-[10px] px-1 py-0 bg-zinc-800 text-zinc-300 border border-zinc-700">SB</Badge>}
+            {alignedFrames.length > 0 && (
+              <Badge variant="secondary" className="text-[10px] px-1 py-0 bg-zinc-800 text-zinc-300 border border-zinc-700">
+                {alignedFrames.join("/")}
+              </Badge>
+            )}
           </div>
           <div className="text-[10px] text-zinc-500 truncate max-w-[160px] font-sans">{stock.name}</div>
         </TableCell>
@@ -127,6 +139,14 @@ function StockRow({ stock, isExpanded, onToggle, showEpColumns, compareMode, isS
                   <p className="font-semibold">Setup Score: {formatNumber(stock.setupScore, 0)}%</p>
                   <p className="text-sm">Qullamaggie Setup-Qualitat</p>
                   {stock.isQullaSetup && <p className="text-zinc-300">Erfullt alle Kriterien</p>}
+                  {stock.stockbeeScore !== undefined && (
+                    <p className="text-zinc-300">Stockbee Score: {formatNumber(stock.stockbeeScore, 0)}%</p>
+                  )}
+                  {alignment && alignment.alignedCount > 0 && (
+                    <p className="text-zinc-300">
+                      Qulla-Alignment: {alignedFrames.join(", ")}
+                    </p>
+                  )}
                 </div>
               </TooltipContent>
             </Tooltip>

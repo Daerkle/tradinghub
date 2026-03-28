@@ -11,8 +11,10 @@ import { streamRateLimit } from "@/lib/rate-limiter";
 import {
   fetchStockData,
   fetchYahooQuoteSnapshotStocks,
+  fetchOpenBBQuoteSnapshotStocksFallback,
   fetchStooqSnapshotStocks,
   applyCatalystMetrics,
+  applyStockbeeMetrics,
   buildStockFromFinvizData,
   fetchFinvizDataWithCache,
   getStockSymbols,
@@ -48,14 +50,15 @@ function selectFinvizSymbolsForBatch(stocks: StockData[]): string[] {
     .filter((stock) =>
       stock.isEP ||
       stock.isQullaSetup ||
+      stock.isStockbeeSetup ||
       stock.catalystScore >= 70 ||
       stock.volumeRatio >= 2.5 ||
       stock.sector === "Unknown" ||
       stock.industry === "Unknown"
     )
     .sort((a, b) => {
-      const scoreA = a.catalystScore + (a.isQullaSetup ? 20 : 0) + (a.isEP ? 10 : 0) + Math.min(a.volumeRatio, 6) * 3;
-      const scoreB = b.catalystScore + (b.isQullaSetup ? 20 : 0) + (b.isEP ? 10 : 0) + Math.min(b.volumeRatio, 6) * 3;
+      const scoreA = a.catalystScore + (a.isQullaSetup ? 20 : 0) + (a.isStockbeeSetup ? 16 : 0) + (a.isEP ? 10 : 0) + Math.min(a.volumeRatio, 6) * 3;
+      const scoreB = b.catalystScore + (b.isQullaSetup ? 20 : 0) + (b.isStockbeeSetup ? 16 : 0) + (b.isEP ? 10 : 0) + Math.min(b.volumeRatio, 6) * 3;
       return scoreB - scoreA;
     })
     .slice(0, MAX_FINVIZ_ENRICH_PER_BATCH);
@@ -142,7 +145,8 @@ function mergeFinvizData(stock: StockData, finvizData: FinvizStockData | null): 
     }
   }
 
-  return applyCatalystMetrics(merged);
+  const withStockbee = applyStockbeeMetrics(merged, { forceRecompute: true });
+  return applyCatalystMetrics(withStockbee);
 }
 
 // Process single stock with error handling
@@ -362,11 +366,17 @@ export async function GET(request: NextRequest) {
             const stillMissingAfterQuote = missingSymbols.filter((symbol) =>
               !quoteFallbackStocks.some((stock) => stock.symbol.toUpperCase() === symbol.toUpperCase())
             );
-            const stooqFallbackStocks = stillMissingAfterQuote.length > 0
-              ? await fetchStooqSnapshotStocks(stillMissingAfterQuote, spyPerformance)
+            const openbbFallbackStocks = stillMissingAfterQuote.length > 0
+              ? await fetchOpenBBQuoteSnapshotStocksFallback(stillMissingAfterQuote, spyPerformance)
+              : [];
+            const stillMissingAfterOpenBB = stillMissingAfterQuote.filter((symbol) =>
+              !openbbFallbackStocks.some((stock) => stock.symbol.toUpperCase() === symbol.toUpperCase())
+            );
+            const stooqFallbackStocks = stillMissingAfterOpenBB.length > 0
+              ? await fetchStooqSnapshotStocks(stillMissingAfterOpenBB, spyPerformance)
               : [];
             const combinedStocks = [...validStocks];
-            for (const stock of [...quoteFallbackStocks, ...stooqFallbackStocks]) {
+            for (const stock of [...quoteFallbackStocks, ...openbbFallbackStocks, ...stooqFallbackStocks]) {
               if (!presentSymbols.has(stock.symbol.toUpperCase())) {
                 combinedStocks.push(stock);
                 presentSymbols.add(stock.symbol.toUpperCase());
@@ -497,11 +507,17 @@ export async function GET(request: NextRequest) {
                 const stillMissingAfterQuote = missingSymbols.filter((symbol) =>
                   !quoteFallbackStocks.some((stock) => stock.symbol.toUpperCase() === symbol.toUpperCase())
                 );
-                const stooqFallbackStocks = stillMissingAfterQuote.length > 0
-                  ? await fetchStooqSnapshotStocks(stillMissingAfterQuote, spyPerformance)
+                const openbbFallbackStocks = stillMissingAfterQuote.length > 0
+                  ? await fetchOpenBBQuoteSnapshotStocksFallback(stillMissingAfterQuote, spyPerformance)
+                  : [];
+                const stillMissingAfterOpenBB = stillMissingAfterQuote.filter((symbol) =>
+                  !openbbFallbackStocks.some((stock) => stock.symbol.toUpperCase() === symbol.toUpperCase())
+                );
+                const stooqFallbackStocks = stillMissingAfterOpenBB.length > 0
+                  ? await fetchStooqSnapshotStocks(stillMissingAfterOpenBB, spyPerformance)
                   : [];
                 const combinedStocks = [...validStocks];
-                for (const stock of [...quoteFallbackStocks, ...stooqFallbackStocks]) {
+                for (const stock of [...quoteFallbackStocks, ...openbbFallbackStocks, ...stooqFallbackStocks]) {
                   if (!presentSymbols.has(stock.symbol.toUpperCase())) {
                     combinedStocks.push(stock);
                     presentSymbols.add(stock.symbol.toUpperCase());

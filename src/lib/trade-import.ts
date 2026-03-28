@@ -36,6 +36,7 @@ interface IBExecution {
   signedQuantity: number; // buy=+, sell=-
   price: number;
   commission: number; // positive cost
+  multiplier: number; // contract multiplier (e.g. 100 for equity options)
 }
 
 function stripBom(text: string): string {
@@ -634,6 +635,8 @@ function parseIBKRExecutions(rows: string[][]): { executions: IBExecution[]; war
     const priceRaw = getValue(row, headerIndex, ["tprice", "tradeprice", "price", "avgprice", "fillprice"]);
     const commissionRaw = getValue(row, headerIndex, ["commfee", "commission", "fees", "comm", "ibcommission"]);
     const buySellRaw = getValue(row, headerIndex, ["buysell", "side", "action"]);
+    const multiplierRaw = getValue(row, headerIndex, ["multiplier", "contractmultiplier"]);
+    const assetClassRaw = getValue(row, headerIndex, ["assetclass", "assetcategory", "sectype", "securitytype"]);
 
     const symbol = (symbolRaw || "").trim().toUpperCase();
     if (!symbol) continue;
@@ -649,6 +652,14 @@ function parseIBKRExecutions(rows: string[][]): { executions: IBExecution[]; war
 
     const commissionParsed = parseIBNumber(commissionRaw);
     const commission = Math.abs(commissionParsed ?? 0);
+    const assetClass = (assetClassRaw || "").trim().toUpperCase();
+    const parsedMultiplier = parseIBNumber(multiplierRaw);
+    const multiplier =
+      parsedMultiplier && Number.isFinite(parsedMultiplier) && parsedMultiplier > 0
+        ? parsedMultiplier
+        : assetClass === "OPT"
+          ? 100
+          : 1;
 
     let signedQty = qtyNum;
     if (buySellRaw) {
@@ -664,6 +675,7 @@ function parseIBKRExecutions(rows: string[][]): { executions: IBExecution[]; war
       signedQuantity: signedQty,
       price,
       commission,
+      multiplier,
     });
   }
 
@@ -691,9 +703,11 @@ function buildTradesFromIBKRExecutions(executions: IBExecution[]): { trades: Imp
     realizedPnl: number;
     exitNotional: number;
     exitQty: number;
+    multiplier: number;
   };
 
   const trades: ImportableTrade[] = [];
+  const multiplierWarnings = new Set<string>();
 
   const bySymbol = new Map<string, IBExecution[]>();
   for (const exec of executions) {
@@ -721,6 +735,7 @@ function buildTradesFromIBKRExecutions(executions: IBExecution[]): { trades: Imp
           realizedPnl: 0,
           exitNotional: 0,
           exitQty: 0,
+          multiplier: exec.multiplier > 0 ? exec.multiplier : 1,
         };
         continue;
       }
@@ -752,10 +767,20 @@ function buildTradesFromIBKRExecutions(executions: IBExecution[]): { trades: Imp
       const commissionOpen = exec.commission - commissionClose;
 
       // Realized PnL for the closing part (gross, fees handled separately)
+      const effectiveMultiplier = state.multiplier > 0 ? state.multiplier : 1;
+      if (Math.abs(exec.multiplier - effectiveMultiplier) > EPS) {
+        const warningKey = `${symbol}|${effectiveMultiplier}|${exec.multiplier}`;
+        if (!multiplierWarnings.has(warningKey)) {
+          multiplierWarnings.add(warningKey);
+          warnings.push(
+            `Multiplikator-Wechsel erkannt bei ${symbol} (${effectiveMultiplier} -> ${exec.multiplier}). P&L wird mit ${effectiveMultiplier} berechnet.`
+          );
+        }
+      }
       if (state.side === "long") {
-        state.realizedPnl += (exec.price - state.entryAvgPrice) * closeQty;
+        state.realizedPnl += (exec.price - state.entryAvgPrice) * closeQty * effectiveMultiplier;
       } else {
-        state.realizedPnl += (state.entryAvgPrice - exec.price) * closeQty;
+        state.realizedPnl += (state.entryAvgPrice - exec.price) * closeQty * effectiveMultiplier;
       }
       state.exitNotional += exec.price * closeQty;
       state.exitQty += closeQty;
@@ -793,6 +818,7 @@ function buildTradesFromIBKRExecutions(executions: IBExecution[]): { trades: Imp
             realizedPnl: 0,
             exitNotional: 0,
             exitQty: 0,
+            multiplier: exec.multiplier > 0 ? exec.multiplier : 1,
           };
         }
       } else {

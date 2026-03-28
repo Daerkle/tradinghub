@@ -68,7 +68,8 @@ function mapFlexTradesToImportable(trades: FlexQueryTrade[]): ImportableTrade[] 
   // Group by symbol for FIFO matching (buy→sell / sell→buy)
   const bySymbol = new Map<string, FlexQueryTrade[]>();
   for (const t of trades) {
-    const sym = t.underlyingSymbol || t.symbol;
+    const sym = (t.symbol || t.underlyingSymbol || "").trim();
+    if (!sym) continue;
     const list = bySymbol.get(sym) || [];
     list.push(t);
     bySymbol.set(sym, list);
@@ -89,6 +90,7 @@ function mapFlexTradesToImportable(trades: FlexQueryTrade[]): ImportableTrade[] 
     let realizedPnl = 0;
     let exitNotional = 0;
     let exitQty = 0;
+    let contractMultiplier = 1;
 
     for (const exec of sorted) {
       const isBuy = exec.buySell === "BUY" || exec.buySell === "BOT";
@@ -104,6 +106,7 @@ function mapFlexTradesToImportable(trades: FlexQueryTrade[]): ImportableTrade[] 
         realizedPnl = 0;
         exitNotional = 0;
         exitQty = 0;
+        contractMultiplier = exec.multiplier > 0 ? exec.multiplier : 1;
         continue;
       }
 
@@ -124,13 +127,17 @@ function mapFlexTradesToImportable(trades: FlexQueryTrade[]): ImportableTrade[] 
       const stateAbs = Math.abs(netQty);
       const closeQty = Math.min(stateAbs, absQty);
       const openQty = absQty - closeQty;
-      totalCommission += Math.abs(exec.commission);
+      const absCommission = Math.abs(exec.commission);
+      const commissionClose = absQty > 0 ? absCommission * (closeQty / absQty) : 0;
+      const commissionOpen = absCommission - commissionClose;
+      totalCommission += commissionClose;
 
       const side = netQty > 0 ? "long" : "short";
+      const effectiveMultiplier = contractMultiplier > 0 ? contractMultiplier : 1;
       if (side === "long") {
-        realizedPnl += (exec.tradePrice - entryPrice) * closeQty;
+        realizedPnl += (exec.tradePrice - entryPrice) * closeQty * effectiveMultiplier;
       } else {
-        realizedPnl += (entryPrice - exec.tradePrice) * closeQty;
+        realizedPnl += (entryPrice - exec.tradePrice) * closeQty * effectiveMultiplier;
       }
       exitNotional += exec.tradePrice * closeQty;
       exitQty += closeQty;
@@ -167,10 +174,12 @@ function mapFlexTradesToImportable(trades: FlexQueryTrade[]): ImportableTrade[] 
           netQty = signedQty > 0 ? openQty : -openQty;
           entryPrice = exec.tradePrice;
           entryTime = new Date(exec.dateTime);
-          totalCommission = 0;
+          totalCommission = commissionOpen;
+          contractMultiplier = exec.multiplier > 0 ? exec.multiplier : 1;
         }
       } else {
         netQty += signedQty;
+        totalCommission += commissionOpen;
       }
     }
   }

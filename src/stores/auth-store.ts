@@ -117,47 +117,21 @@ export const useAuthStore = create<AuthState>()(
 
       checkAuth: async () => {
         initializeParse();
+        set({ isLoading: true });
         try {
           const currentUser = Parse.User.current();
-          if (!currentUser) {
-            set({ user: null, isAuthenticated: false, isLoading: false });
-            return;
-          }
-
-          // Restore auth state instantly; validate token in background to avoid UI stalls.
-          set({
-            user: {
-              id: currentUser.id ?? "",
-              username: currentUser.get("username") ?? "",
-              email: currentUser.get("email"),
-              avatar: currentUser.get("avatar"),
-            },
-            isAuthenticated: true,
-            isLoading: false,
-          });
-
-          const sessionToken = currentUser.getSessionToken();
-          if (!sessionToken) {
-            return;
-          }
-
-          void withTimeout(
-            currentUser.fetch({ sessionToken }),
-            "Session-Check",
-            SESSION_CHECK_TIMEOUT_MS
-          )
-            .then(() => {
-              set({
-                user: {
-                  id: currentUser.id ?? "",
-                  username: currentUser.get("username") ?? "",
-                  email: currentUser.get("email"),
-                  avatar: currentUser.get("avatar"),
-                },
-                isAuthenticated: true,
-              });
-            })
-            .catch(async (e: unknown) => {
+          if (currentUser) {
+            // Validate session token directly against Parse API
+            try {
+              const sessionToken = currentUser.getSessionToken();
+              if (sessionToken) {
+                await withTimeout(
+                  currentUser.fetch({ sessionToken }),
+                  "Session-Check",
+                  SESSION_CHECK_TIMEOUT_MS
+                );
+              }
+            } catch (e: unknown) {
               const code = (e as { code?: number })?.code;
               if (code === 209) {
                 // Invalid session token - clear and redirect to login
@@ -167,9 +141,23 @@ export const useAuthStore = create<AuthState>()(
                   // ignore
                 }
                 set({ user: null, isAuthenticated: false, isLoading: false });
+                return;
               }
               // Other errors (network etc.) - keep user logged in
+            }
+            set({
+              user: {
+                id: currentUser.id ?? "",
+                username: currentUser.get("username") ?? "",
+                email: currentUser.get("email"),
+                avatar: currentUser.get("avatar"),
+              },
+              isAuthenticated: true,
+              isLoading: false,
             });
+          } else {
+            set({ user: null, isAuthenticated: false, isLoading: false });
+          }
         } catch {
           set({ user: null, isAuthenticated: false, isLoading: false });
         }

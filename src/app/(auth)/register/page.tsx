@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Loader2 } from "lucide-react";
@@ -20,11 +20,18 @@ import { toast } from "sonner";
 
 export default function RegisterPage() {
   const router = useRouter();
-  const { register, isLoading } = useAuthStore();
+  const { register, isLoading, isAuthenticated } = useAuthStore();
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      router.replace("/dashboard");
+      router.refresh();
+    }
+  }, [isAuthenticated, router]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -38,6 +45,7 @@ export default function RegisterPage() {
       await register(username, email, password);
       toast.success("Konto erfolgreich erstellt");
       router.replace("/dashboard");
+      router.refresh();
     } catch (error: unknown) {
       const message =
         error instanceof Error ? error.message : "Registration failed";

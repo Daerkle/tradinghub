@@ -36,6 +36,45 @@ export async function GET(
 
     // Merge Finviz data if available
     if (finvizData) {
+      if ((!stockData.name || stockData.name === stockData.symbol) && finvizData.ticker) {
+        stockData.name = stockData.name || finvizData.ticker;
+      }
+      if ((!stockData.sector || stockData.sector === "Unknown") && finvizData.sector) {
+        stockData.sector = finvizData.sector;
+      }
+      if ((!stockData.industry || stockData.industry === "Unknown") && finvizData.industry) {
+        stockData.industry = finvizData.industry;
+      }
+      if ((!stockData.marketCap || stockData.marketCap <= 0) && finvizData.marketCap) {
+        stockData.marketCap = finvizData.marketCap;
+      }
+      if (stockData.momentum1M === 0 && finvizData.perfMonth !== undefined) {
+        stockData.momentum1M = finvizData.perfMonth;
+      }
+      if (stockData.momentum3M === 0 && finvizData.perfQuarter !== undefined) {
+        stockData.momentum3M = finvizData.perfQuarter;
+      }
+      if (stockData.momentum6M === 0 && finvizData.perfHalfY !== undefined) {
+        stockData.momentum6M = finvizData.perfHalfY;
+      }
+      if (stockData.momentum1Y === 0 && finvizData.perfYear !== undefined) {
+        stockData.momentum1Y = finvizData.perfYear;
+      }
+      if ((!stockData.rsi || stockData.rsi === 50) && finvizData.rsi14 !== undefined) {
+        stockData.rsi = finvizData.rsi14;
+      }
+      if (stockData.distanceFrom52WkHigh === 0 && finvizData.distanceFrom52WkHigh !== undefined) {
+        stockData.distanceFrom52WkHigh = finvizData.distanceFrom52WkHigh;
+      }
+      if (stockData.distanceFrom52WkLow === 0 && finvizData.distanceFrom52WkLow !== undefined) {
+        stockData.distanceFrom52WkLow = finvizData.distanceFrom52WkLow;
+      }
+      if (
+        (!Number.isFinite(stockData.volumeRatio) || stockData.volumeRatio <= 0 || stockData.volumeRatio === 1) &&
+        finvizData.relativeVolume !== undefined
+      ) {
+        stockData.volumeRatio = finvizData.relativeVolume;
+      }
       stockData.shortFloat = finvizData.shortFloat;
       stockData.insiderOwn = finvizData.insiderOwn;
       stockData.instOwn = finvizData.instOwn;

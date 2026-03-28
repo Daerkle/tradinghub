@@ -85,6 +85,20 @@ export function filterByScanType(stocks: StockData[], scanType: string): StockDa
     case "setup":
     case "qullamaggie":
       return stocks.filter(s => s.isQullaSetup).sort((a, b) => b.setupScore - a.setupScore);
+    case "stockbee":
+      return stocks
+        .filter((s) =>
+          s.isStockbeeSetup ||
+          s.stockbee?.isEpisodicPivot ||
+          s.stockbee?.isMomentumBurst ||
+          s.stockbee?.isRangeExpansionBreakout
+        )
+        .sort((a, b) => {
+          const alignA = a.stockbee?.qullaAlignment?.alignedCount ?? 0;
+          const alignB = b.stockbee?.qullaAlignment?.alignedCount ?? 0;
+          if (alignB !== alignA) return alignB - alignA;
+          return (b.stockbeeScore ?? 0) - (a.stockbeeScore ?? 0);
+        });
     case "rs":
       return stocks.filter(s => s.rsRating >= 80).sort((a, b) => b.rsRating - a.rsRating);
     case "minervini":

@@ -15,6 +15,7 @@ interface FilterBadgesProps {
   momentum3mCount: number;
   momentum6mCount: number;
   setupCount: number;
+  stockbeeCount: number;
   rsCount: number;
   minerviniCount: number;
   canslimCount: number;
@@ -29,6 +30,7 @@ const BADGES = [
   { key: "3m", label: "3M", icon: TrendingUp, title: undefined, active: "bg-white text-black hover:bg-zinc-200", inactive: "bg-zinc-800 text-zinc-400 hover:bg-zinc-700" },
   { key: "6m", label: "6M", icon: Target, title: undefined, active: "bg-white text-black hover:bg-zinc-200", inactive: "bg-zinc-800 text-zinc-400 hover:bg-zinc-700" },
   { key: "setup", label: "Qulla", icon: Star, title: undefined, active: "bg-white text-black hover:bg-zinc-200", inactive: "bg-zinc-800 text-zinc-400 hover:bg-zinc-700" },
+  { key: "stockbee", label: "Stockbee", icon: Zap, title: "Stockbee: EP + Momentum Burst + Expansion Breakout mit Trend/Liquiditaet.", active: "bg-white text-black hover:bg-zinc-200", inactive: "bg-zinc-800 text-zinc-400 hover:bg-zinc-700" },
   { key: "rs", label: "RS", icon: TrendingUp, title: undefined, active: "bg-white text-black hover:bg-zinc-200", inactive: "bg-zinc-800 text-zinc-400 hover:bg-zinc-700" },
   {
     key: "minervini",
@@ -54,11 +56,12 @@ const BADGES = [
 export function ScannerFilterBadges({
   activeTab, setActiveTab, totalCount,
   epCount, momentum1mCount, momentum3mCount, momentum6mCount,
-  setupCount, rsCount, minerviniCount, canslimCount, chrisSwingsCount, squeezeCount, catalystCount,
+  setupCount, stockbeeCount, rsCount, minerviniCount, canslimCount, chrisSwingsCount, squeezeCount, catalystCount,
 }: FilterBadgesProps) {
   const counts: Record<string, number> = {
     ep: epCount, "1m": momentum1mCount, "3m": momentum3mCount, "6m": momentum6mCount,
     setup: setupCount,
+    stockbee: stockbeeCount,
     rs: rsCount,
     minervini: minerviniCount,
     canslim: canslimCount,

@@ -14,6 +14,7 @@ import {
   Sun,
   ChevronDown,
   Radar,
+  Rows3,
   Calendar,
   FileText,
   Activity,
@@ -204,6 +205,22 @@ export function AppSidebar() {
                   <Link href="/scanner">
                     <Radar className="h-4 w-4" />
                     <span>Scanner</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild tooltip="Saisonalitäten" isActive={pathname === "/seasonality"}>
+                  <Link href="/seasonality">
+                    <CalendarDays className="h-4 w-4" />
+                    <span>Saisonalitäten</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild tooltip="Edge Free" isActive={pathname === "/edge-free"}>
+                  <Link href="/edge-free">
+                    <Rows3 className="h-4 w-4" />
+                    <span>Edge Free</span>
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>

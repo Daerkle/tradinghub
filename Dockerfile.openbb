@@ -1,0 +1,18 @@
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    ca-certificates \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --upgrade pip setuptools wheel \
+    && pip install "openbb>=4.0.0"
+
+EXPOSE 6900
+
+CMD ["sh", "-lc", "openbb-api --host 0.0.0.0 --port 6900 || python -m uvicorn openbb_core.api.rest_api:app --host 0.0.0.0 --port 6900"]

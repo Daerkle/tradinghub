@@ -29,10 +29,24 @@ import {
   isRedisAvailable,
   getCacheStats,
 } from "./redis-cache";
+import { createYahooProxyFetch } from "./proxy-fetch";
+import {
+  fetchOpenBBFundamentalSnapshot,
+  fetchOpenBBHistoricalCandles,
+  fetchOpenBBNews,
+  fetchOpenBBQuoteSnapshotStocks,
+  fetchStooqHistoricalCandles,
+  getOpenBBMaxSymbolsPerScan,
+  isOpenBBEnabled,
+  type OpenBBQuoteSnapshot,
+} from "./openbb-service";
 
 // Create Yahoo Finance instance (required for v3+)
+const yahooProxyFetch = createYahooProxyFetch();
 const yahooFinance = new YahooFinance({
   queue: { concurrency: 2 },
+  suppressNotices: ["yahooSurvey"],
+  fetch: yahooProxyFetch,
 });
 
 // Timeout wrapper for async operations
@@ -56,6 +70,11 @@ const STOOQ_CONCURRENCY = 8;
 const FINVIZ_ENRICHMENT_LIMIT = 300;
 const SCAN_BATCH_SIZE = 8;
 const OPEN_UNIVERSE_MIN_SIZE = 80;
+const OPENBB_FALLBACK_LIMIT = getOpenBBMaxSymbolsPerScan();
+const STOOQ_FALLBACK_LIMIT_RAW = Number.parseInt(process.env.STOOQ_MAX_SYMBOLS_PER_SCAN || "200", 10);
+const STOOQ_FALLBACK_LIMIT = Number.isFinite(STOOQ_FALLBACK_LIMIT_RAW) && STOOQ_FALLBACK_LIMIT_RAW > 0
+  ? STOOQ_FALLBACK_LIMIT_RAW
+  : 200;
 let yahooRateLimitedUntil = 0;
 
 type ScannerResultsCacheKey = "full" | "seeded";
@@ -148,6 +167,10 @@ export interface StockData {
   // Qullamaggie Setup
   isQullaSetup: boolean;
   setupScore: number;
+  // Stockbee Setup
+  isStockbeeSetup?: boolean;
+  stockbeeScore?: number;
+  stockbee?: StockbeeSignals;
   // Catalyst Intelligence
   catalystScore: number; // 0-100, combines momentum/volume/gap/RS/setup/short-interest
   catalystSignals: string[]; // Human-readable catalyst flags
@@ -203,6 +226,35 @@ export interface StockData {
   salesGrowthQoQ?: number;    // Sales Growth Q/Q
   earningsDate?: string;      // Next Earnings Date
   todayNewsCount?: number;    // Number of news headlines from today (when available)
+}
+
+export interface QullaMomentumAlignment {
+  month1: boolean;
+  month3: boolean;
+  month6: boolean;
+  month1Percentile: number;
+  month3Percentile: number;
+  month6Percentile: number;
+  thresholdPercentile: number;
+  alignedCount: number;
+  alignsWithQullamaggie: boolean;
+}
+
+export interface StockbeeSignals {
+  isEpisodicPivot: boolean;
+  isMomentumBurst: boolean;
+  isRangeExpansionBreakout: boolean;
+  isStockbeeSetup: boolean;
+  stockbeeScore: number;
+  hasMinLiquidity: boolean;
+  hasMinPrice: boolean;
+  trendTemplate: boolean;
+  nearHighs: boolean;
+  momentumLeader: boolean;
+  volumeExpansion: boolean;
+  closeNearHigh: boolean;
+  tightConsolidation: boolean;
+  qullaAlignment?: QullaMomentumAlignment;
 }
 
 export interface CandleData {
@@ -423,6 +475,167 @@ function clampScore(value: number, min: number = 0, max: number = 100): number {
   return Math.max(min, Math.min(max, value));
 }
 
+interface StockbeeComputationContext {
+  dayHigh?: number;
+  dayLow?: number;
+  prior20DayHigh?: number;
+  prior20DayLow?: number;
+}
+
+function getCloseNearHigh(
+  price: number,
+  dayHigh?: number,
+  dayLow?: number,
+  fallback?: boolean
+): boolean {
+  if (Number.isFinite(dayHigh) && (dayHigh || 0) > 0) {
+    const high = dayHigh as number;
+    if (Number.isFinite(dayLow) && (dayLow || 0) > 0 && high > (dayLow as number)) {
+      const low = dayLow as number;
+      const closeLocationPercent = ((price - low) / (high - low)) * 100;
+      return closeLocationPercent >= 70 || price >= high * 0.98;
+    }
+    return price >= high * 0.98;
+  }
+  return fallback ?? false;
+}
+
+function computeStockbeeSignals(
+  stock: StockData,
+  context: StockbeeComputationContext = {}
+): StockbeeSignals {
+  const price = stock.price || 0;
+  const avgVolume = stock.avgVolume || 0;
+  const dayHigh = context.dayHigh;
+  const dayLow = context.dayLow;
+  const prior20DayHigh = context.prior20DayHigh ?? stock.prior20DayHigh;
+  const prior20DayLow = context.prior20DayLow ?? stock.prior20DayLow;
+
+  const dollarVolume = price * avgVolume;
+  const hasMinLiquidity = dollarVolume >= 5_000_000;
+  const hasMinPrice = price >= 10;
+  const trendTemplate = (stock.distanceFrom50SMA ?? 0) >= 0 && (stock.distanceFrom200SMA ?? 0) >= 0;
+  const nearHighs = (stock.distanceFrom52WkHigh ?? -100) >= -25 && (stock.distanceFrom52WkLow ?? 0) >= 30;
+  const momentumLeader = (stock.momentum1M ?? 0) >= 10 || (stock.momentum3M ?? 0) >= 20 || (stock.momentum6M ?? 0) >= 30;
+  const volumeExpansion = (stock.volumeRatio ?? 0) >= 1.5;
+
+  const closeNearHigh = getCloseNearHigh(
+    price,
+    dayHigh,
+    dayLow,
+    stock.stockbee?.closeNearHigh
+  );
+
+  const priorRangePercent = (prior20DayHigh && prior20DayLow && prior20DayLow > 0)
+    ? ((prior20DayHigh - prior20DayLow) / prior20DayLow) * 100
+    : null;
+  const tightConsolidation = priorRangePercent !== null
+    ? priorRangePercent <= 30
+    : (stock.stockbee?.tightConsolidation ?? false);
+
+  const breakoutAbovePriorHigh = (prior20DayHigh && prior20DayHigh > 0)
+    ? price >= prior20DayHigh * 1.005
+    : false;
+
+  const dayRangePercent =
+    Number.isFinite(dayHigh) && Number.isFinite(dayLow) && (dayLow || 0) > 0
+      ? (((dayHigh as number) - (dayLow as number)) / (dayLow as number)) * 100
+      : stock.adrPercent;
+  const rangeExpansion = (stock.adrPercent ?? 0) > 0
+    ? dayRangePercent >= (stock.adrPercent || 0) * 1.2
+    : dayRangePercent >= 5;
+
+  // Stockbee EP: large gap + strong volume + closes near high.
+  const isEpisodicPivot = (stock.gapPercent ?? 0) >= 10 && (stock.volumeRatio ?? 0) >= 2 && closeNearHigh;
+
+  // Stockbee MRB-style trigger: price expansion with volume after tighter action.
+  const isMomentumBurst =
+    (stock.changePercent ?? 0) >= 4 &&
+    (stock.volumeRatio ?? 0) >= 1.8 &&
+    closeNearHigh &&
+    (breakoutAbovePriorHigh || rangeExpansion) &&
+    tightConsolidation;
+
+  // Range-expansion breakout without a full EP gap.
+  const isRangeExpansionBreakout =
+    (stock.changePercent ?? 0) >= 3 &&
+    volumeExpansion &&
+    closeNearHigh &&
+    rangeExpansion &&
+    breakoutAbovePriorHigh;
+
+  const hasCatalystTrigger = isEpisodicPivot || isMomentumBurst || isRangeExpansionBreakout;
+
+  const scoreFlags = [
+    hasMinLiquidity,
+    hasMinPrice,
+    trendTemplate,
+    nearHighs,
+    momentumLeader,
+    volumeExpansion,
+    closeNearHigh,
+    tightConsolidation,
+    hasCatalystTrigger,
+  ];
+  const score = Math.round((scoreFlags.filter(Boolean).length / scoreFlags.length) * 100);
+
+  const isStockbeeSetup =
+    hasMinLiquidity &&
+    hasMinPrice &&
+    trendTemplate &&
+    nearHighs &&
+    momentumLeader &&
+    hasCatalystTrigger;
+
+  return {
+    isEpisodicPivot,
+    isMomentumBurst,
+    isRangeExpansionBreakout,
+    isStockbeeSetup,
+    stockbeeScore: clampScore(score),
+    hasMinLiquidity,
+    hasMinPrice,
+    trendTemplate,
+    nearHighs,
+    momentumLeader,
+    volumeExpansion,
+    closeNearHigh,
+    tightConsolidation,
+    qullaAlignment: stock.stockbee?.qullaAlignment,
+  };
+}
+
+export function applyStockbeeMetrics(
+  stock: StockData,
+  options: {
+    forceRecompute?: boolean;
+    context?: StockbeeComputationContext;
+  } = {}
+): StockData {
+  const { forceRecompute = false, context } = options;
+  const existing = !forceRecompute ? stock.stockbee : undefined;
+  const computedSignals = existing ?? computeStockbeeSignals(stock, context);
+
+  const scanTypes = Array.isArray(stock.scanTypes) ? [...stock.scanTypes] : [];
+  if (computedSignals.isStockbeeSetup && !scanTypes.includes("Stockbee")) {
+    scanTypes.push("Stockbee");
+  }
+  if (computedSignals.isEpisodicPivot && !scanTypes.includes("Stockbee EP")) {
+    scanTypes.push("Stockbee EP");
+  }
+  if (computedSignals.isMomentumBurst && !scanTypes.includes("Momentum Burst")) {
+    scanTypes.push("Momentum Burst");
+  }
+
+  return {
+    ...stock,
+    isStockbeeSetup: computedSignals.isStockbeeSetup,
+    stockbeeScore: computedSignals.stockbeeScore,
+    stockbee: computedSignals,
+    scanTypes: Array.from(new Set(scanTypes)),
+  };
+}
+
 function buildCatalystMetrics(stock: {
   gapPercent: number;
   volumeRatio: number;
@@ -474,21 +687,22 @@ function buildCatalystMetrics(stock: {
 }
 
 export function applyCatalystMetrics(stock: StockData): StockData {
+  const withStockbee = applyStockbeeMetrics(stock);
   const metrics = buildCatalystMetrics({
-    gapPercent: stock.gapPercent,
-    volumeRatio: stock.volumeRatio,
-    adrPercent: stock.adrPercent,
-    rsRating: stock.rsRating,
-    setupScore: stock.setupScore,
-    momentum1M: stock.momentum1M,
-    momentum3M: stock.momentum3M,
-    momentum6M: stock.momentum6M,
-    shortFloat: stock.shortFloat,
-    todayNewsCount: stock.todayNewsCount,
+    gapPercent: withStockbee.gapPercent,
+    volumeRatio: withStockbee.volumeRatio,
+    adrPercent: withStockbee.adrPercent,
+    rsRating: withStockbee.rsRating,
+    setupScore: withStockbee.setupScore,
+    momentum1M: withStockbee.momentum1M,
+    momentum3M: withStockbee.momentum3M,
+    momentum6M: withStockbee.momentum6M,
+    shortFloat: withStockbee.shortFloat,
+    todayNewsCount: withStockbee.todayNewsCount,
   });
 
   return {
-    ...stock,
+    ...withStockbee,
     catalystScore: metrics.catalystScore,
     catalystSignals: metrics.catalystSignals,
   };
@@ -896,7 +1110,140 @@ export function buildStockFromYahooQuoteSnapshot(
     scanTypes,
   };
 
-  const withCatalyst = applyCatalystMetrics(baseStock);
+  const withStockbee = applyStockbeeMetrics(baseStock, {
+    forceRecompute: true,
+    context: {
+      dayHigh,
+      dayLow,
+    },
+  });
+  const withCatalyst = applyCatalystMetrics(withStockbee);
+  if (withCatalyst.catalystScore >= 70 && !withCatalyst.scanTypes.includes("Catalyst")) {
+    withCatalyst.scanTypes = [...withCatalyst.scanTypes, "Catalyst"];
+  }
+  return withCatalyst;
+}
+
+function buildStockFromOpenBBQuoteSnapshot(
+  quote: OpenBBQuoteSnapshot,
+  spyPerformance?: { m1: number; m3: number; m6: number }
+): StockData {
+  const ticker = quote.symbol.toUpperCase();
+  const price = quote.price || 0;
+  const volume = quote.volume || 0;
+  const avgVolume = quote.avgVolume || volume;
+  const volumeRatio = avgVolume > 0 ? volume / avgVolume : 1;
+  const prevClose = quote.previousClose || price;
+  const marketOpen = quote.open || price;
+  const change = quote.change || (price - prevClose);
+  const changePercent = quote.changePercent || (prevClose > 0 ? ((price / prevClose) - 1) * 100 : 0);
+  const gapPercent = prevClose > 0 ? ((marketOpen / prevClose) - 1) * 100 : changePercent;
+  const dayHigh = quote.dayHigh || price;
+  const dayLow = quote.dayLow || price;
+  const adrPercent = price > 0 && dayLow > 0 ? ((dayHigh - dayLow) / dayLow) * 100 : 0;
+  const ema50 = price;
+  const ema200 = price;
+  const sma20 = price;
+  const sma50 = price;
+  const sma150 = price;
+  const sma200 = price;
+  const distanceFrom52WkHigh = quote.fiftyTwoWeekHigh > 0 ? ((price / quote.fiftyTwoWeekHigh) - 1) * 100 : 0;
+  const distanceFrom52WkLow = quote.fiftyTwoWeekLow > 0 ? ((price / quote.fiftyTwoWeekLow) - 1) * 100 : 0;
+  const hasMinLiquidity = (price * avgVolume) >= 5_000_000;
+  const hasMinPrice = price >= 10;
+  const ema50AboveEma200 = true;
+  const priceAboveEma200 = true;
+  const priceAboveEma50 = true;
+  const goodADR = adrPercent >= 5;
+  const hasStrongMomentum = changePercent >= 5;
+  const sma200TrendingUp = changePercent >= 0;
+  const isNear52WkHigh = distanceFrom52WkHigh >= -25;
+  const isAbove52WkLow = distanceFrom52WkLow >= 30;
+  const volatilityMonth = adrPercent >= 4;
+  const coreScore = [hasMinLiquidity, hasMinPrice, ema50AboveEma200, priceAboveEma200, priceAboveEma50, goodADR].filter(Boolean).length;
+  const supportScore = [hasStrongMomentum, sma200TrendingUp, isNear52WkHigh, isAbove52WkLow, volatilityMonth].filter(Boolean).length;
+  const setupScore = ((coreScore + supportScore) / 11) * 100;
+  const isEP = gapPercent >= 5 && volumeRatio >= 1.5;
+  const rsRating = spyPerformance
+    ? Math.round(clampScore(50 + (changePercent - spyPerformance.m1) * 0.8, 1, 99))
+    : 50;
+  const scanTypes: string[] = [];
+  if (isEP) scanTypes.push("EP");
+  if (changePercent >= 5) scanTypes.push("1M Momentum");
+
+  const baseStock: StockData = {
+    symbol: ticker,
+    name: quote.name || ticker,
+    price,
+    change,
+    changePercent,
+    volume,
+    avgVolume,
+    volumeRatio,
+    marketCap: quote.marketCap || 0,
+    momentum1M: 0,
+    momentum3M: 0,
+    momentum6M: 0,
+    momentum1Y: 0,
+    rsi: 50,
+    adrPercent,
+    distanceFrom20SMA: 0,
+    distanceFrom50SMA: 0,
+    distanceFrom200SMA: 0,
+    distanceFrom52WkHigh,
+    distanceFrom52WkLow,
+    ema10: sma20,
+    ema20: sma20,
+    ema50,
+    ema200,
+    sma20,
+    sma50,
+    sma150,
+    sma200,
+    eps: quote.eps || 0,
+    epsGrowth: quote.epsGrowth || 0,
+    revenueGrowth: quote.revenueGrowth || 0,
+    peRatio: quote.peRatio || 0,
+    forwardPE: quote.forwardPE || 0,
+    rsRating,
+    analystRating: quote.analystRating || "N/A",
+    targetPrice: quote.targetPrice || 0,
+    numAnalysts: quote.numAnalysts || 0,
+    sector: quote.sector || "Unknown",
+    industry: quote.industry || "Unknown",
+    gapPercent,
+    isEP,
+    isQullaSetup: false,
+    setupScore,
+    catalystScore: 0,
+    catalystSignals: [],
+    setupDetails: {
+      hasMinLiquidity,
+      hasMinPrice,
+      ema50AboveEma200,
+      priceAboveEma200,
+      priceAboveEma50,
+      goodADR,
+      hasStrongMomentum,
+      sma200TrendingUp,
+      isNear52WkHigh,
+      isAbove52WkLow,
+      volatilityMonth,
+      coreScore,
+      supportScore,
+      dollarVolume: price * avgVolume,
+    },
+    scanTypes,
+  };
+
+  const withStockbee = applyStockbeeMetrics(baseStock, {
+    forceRecompute: true,
+    context: {
+      dayHigh,
+      dayLow,
+    },
+  });
+  const withCatalyst = applyCatalystMetrics(withStockbee);
   if (withCatalyst.catalystScore >= 70 && !withCatalyst.scanTypes.includes("Catalyst")) {
     withCatalyst.scanTypes = [...withCatalyst.scanTypes, "Catalyst"];
   }
@@ -907,7 +1254,7 @@ export async function fetchYahooQuoteSnapshotStocks(
   symbols: string[],
   spyPerformance?: { m1: number; m3: number; m6: number }
 ): Promise<StockData[]> {
-  if (symbols.length === 0) return [];
+  if (symbols.length === 0 || isYahooRateLimited()) return [];
 
   const dedupedSymbols = dedupeSymbols(symbols);
   const quoteMap = new Map<string, YahooQuoteSnapshot>();
@@ -919,7 +1266,7 @@ export async function fetchYahooQuoteSnapshotStocks(
 
     try {
       const response = await withTimeout(
-        fetch(url, {
+        yahooProxyFetch(url, {
           headers: {
             "User-Agent": "Mozilla/5.0",
             "Accept": "application/json",
@@ -967,6 +1314,29 @@ export async function fetchYahooQuoteSnapshotStocks(
       return stock.price > 0 ? stock : null;
     })
     .filter((stock): stock is StockData => stock !== null);
+
+  return stocks;
+}
+
+export async function fetchOpenBBQuoteSnapshotStocksFallback(
+  symbols: string[],
+  spyPerformance?: { m1: number; m3: number; m6: number }
+): Promise<StockData[]> {
+  if (!isOpenBBEnabled() || symbols.length === 0) return [];
+
+  const dedupedSymbols = dedupeSymbols(symbols).slice(0, OPENBB_FALLBACK_LIMIT);
+  if (dedupedSymbols.length === 0) return [];
+
+  const quoteMap = await fetchOpenBBQuoteSnapshotStocks(dedupedSymbols);
+  if (quoteMap.size === 0) return [];
+
+  const stocks = dedupedSymbols
+    .map((symbol) => {
+      const quote = quoteMap.get(symbol);
+      if (!quote) return null;
+      return buildStockFromOpenBBQuoteSnapshot(quote, spyPerformance);
+    })
+    .filter((stock): stock is StockData => stock !== null && stock.price > 0);
 
   return stocks;
 }
@@ -1071,7 +1441,14 @@ function buildStockFromStooqSnapshot(
     scanTypes,
   };
 
-  return applyCatalystMetrics(baseStock);
+  const withStockbee = applyStockbeeMetrics(baseStock, {
+    forceRecompute: true,
+    context: {
+      dayHigh: values.high,
+      dayLow: values.low,
+    },
+  });
+  return applyCatalystMetrics(withStockbee);
 }
 
 async function fetchSingleStooqSnapshot(symbol: string): Promise<{ symbol: string; open: number; high: number; low: number; close: number; volume: number } | null> {
@@ -1168,7 +1545,6 @@ export async function getSPYPerformance(): Promise<{ m1: number; m3: number; m6:
   type SpyPerformance = { m1: number; m3: number; m6: number };
   const SPY_PERF_CACHE_TTL_MS = 15 * 60 * 1000;
 
-  // eslint-disable-next-line @typescript-eslint/no-use-before-define
   if (spyPerformanceCache && Date.now() - spyPerformanceCache.fetchedAt < SPY_PERF_CACHE_TTL_MS) {
     return spyPerformanceCache.value;
   }
@@ -1269,6 +1645,16 @@ export async function getSPYPerformance(): Promise<{ m1: number; m3: number; m6:
     closes = await fetchStooqDailyCloses("SPY");
   }
 
+  if (!closes && isOpenBBEnabled()) {
+    const candles = await fetchOpenBBHistoricalCandles("SPY", 320);
+    const openbbCloses = candles
+      .map((candle) => candle.close)
+      .filter((close) => Number.isFinite(close) && close > 0);
+    if (openbbCloses.length >= 63) {
+      closes = openbbCloses;
+    }
+  }
+
   const value = closes ? compute(closes) : { m1: 0, m3: 0, m6: 0 };
   spyPerformanceCache = { fetchedAt: Date.now(), value };
   return value;
@@ -1286,10 +1672,113 @@ interface YahooQuote {
   volume?: number;
 }
 
+async function fetchSingleOpenBBFallbackStock(
+  symbol: string,
+  spyPerformance?: { m1: number; m3: number; m6: number }
+): Promise<StockData | null> {
+  if (!isOpenBBEnabled()) return null;
+
+  const baseCandidates = await fetchOpenBBQuoteSnapshotStocksFallback([symbol], spyPerformance);
+  if (baseCandidates.length === 0) return null;
+
+  let fallback = baseCandidates[0];
+  const candles = await fetchOpenBBHistoricalCandles(symbol, 320);
+
+  if (candles.length >= 40) {
+    const closes = candles.map((candle) => candle.close).filter((value) => Number.isFinite(value) && value > 0);
+    const highs = candles.map((candle) => candle.high).filter((value) => Number.isFinite(value) && value > 0);
+    const lows = candles.map((candle) => candle.low).filter((value) => Number.isFinite(value) && value > 0);
+    const volumes = candles.map((candle) => candle.volume).filter((value) => Number.isFinite(value) && value >= 0);
+    const latestPrice = fallback.price > 0 ? fallback.price : closes[closes.length - 1];
+
+    if (closes.length >= 20 && latestPrice > 0) {
+      const ema10 = calculateEMA(closes, 10);
+      const ema20 = calculateEMA(closes, 20);
+      const ema50 = calculateEMA(closes, 50);
+      const ema200 = calculateEMA(closes, 200);
+      const sma20 = calculateSMA(closes, 20);
+      const sma50 = calculateSMA(closes, 50);
+      const sma150 = calculateSMA(closes, 150);
+      const sma200 = calculateSMA(closes, 200);
+      const rsi = calculateRSI(closes);
+      const adrPercent = calculateADR(highs, lows);
+      const momentum1M = closes.length >= 21 ? ((latestPrice / closes[closes.length - 21]) - 1) * 100 : fallback.momentum1M;
+      const momentum3M = closes.length >= 63 ? ((latestPrice / closes[closes.length - 63]) - 1) * 100 : fallback.momentum3M;
+      const momentum6M = closes.length >= 126 ? ((latestPrice / closes[closes.length - 126]) - 1) * 100 : fallback.momentum6M;
+      const momentum1Y = closes.length >= 252 ? ((latestPrice / closes[closes.length - 252]) - 1) * 100 : fallback.momentum1Y;
+      const high52 = Math.max(...highs.slice(-252));
+      const low52 = Math.min(...lows.slice(-252));
+      const avgVolume = volumes.length >= 20
+        ? volumes.slice(-20).reduce((sum, value) => sum + value, 0) / 20
+        : fallback.avgVolume;
+      const volume = fallback.volume > 0 ? fallback.volume : (volumes[volumes.length - 1] || 0);
+      const volumeRatio = avgVolume > 0 ? volume / avgVolume : fallback.volumeRatio;
+
+      fallback = {
+        ...fallback,
+        chartData: candles.slice(-100),
+        momentum1M,
+        momentum3M,
+        momentum6M,
+        momentum1Y,
+        rsi,
+        adrPercent,
+        ema10,
+        ema20,
+        ema50,
+        ema200,
+        sma20,
+        sma50,
+        sma150,
+        sma200,
+        distanceFrom20SMA: sma20 > 0 ? ((latestPrice / sma20) - 1) * 100 : fallback.distanceFrom20SMA,
+        distanceFrom50SMA: sma50 > 0 ? ((latestPrice / sma50) - 1) * 100 : fallback.distanceFrom50SMA,
+        distanceFrom200SMA: sma200 > 0 ? ((latestPrice / sma200) - 1) * 100 : fallback.distanceFrom200SMA,
+        distanceFrom52WkHigh: high52 > 0 ? ((latestPrice / high52) - 1) * 100 : fallback.distanceFrom52WkHigh,
+        distanceFrom52WkLow: low52 > 0 ? ((latestPrice / low52) - 1) * 100 : fallback.distanceFrom52WkLow,
+        volume,
+        avgVolume,
+        volumeRatio,
+      };
+    }
+  }
+
+  const fundamentals = await fetchOpenBBFundamentalSnapshot(symbol);
+  if (fundamentals) {
+    fallback = {
+      ...fallback,
+      eps: fundamentals.eps || fallback.eps,
+      epsGrowth: fundamentals.epsGrowth || fallback.epsGrowth,
+      peRatio: fundamentals.peRatio || fallback.peRatio,
+      forwardPE: fundamentals.forwardPE || fallback.forwardPE,
+      targetPrice: fundamentals.targetPrice || fallback.targetPrice,
+      analystRating: fundamentals.analystRating || fallback.analystRating,
+      numAnalysts: fundamentals.numAnalysts || fallback.numAnalysts,
+      sector: fallback.sector === "Unknown" ? fundamentals.sector : fallback.sector,
+      industry: fallback.industry === "Unknown" ? fundamentals.industry : fallback.industry,
+      marketCap: fundamentals.marketCap || fallback.marketCap,
+      earningsDate: fundamentals.earningsDate || fallback.earningsDate,
+    };
+  }
+
+  const withStockbee = applyStockbeeMetrics(fallback, {
+    forceRecompute: true,
+    context: {
+      dayHigh: fallback.chartData?.[fallback.chartData.length - 1]?.high || fallback.price,
+      dayLow: fallback.chartData?.[fallback.chartData.length - 1]?.low || fallback.price,
+    },
+  });
+  return applyCatalystMetrics(withStockbee);
+}
+
 // Fetch stock data with all indicators
 export async function fetchStockData(symbol: string, spyPerformance?: { m1: number; m3: number; m6: number }): Promise<StockData | null> {
   if (isYahooRateLimited()) {
-    return null;
+    const fastOpenBB = await fetchOpenBBQuoteSnapshotStocksFallback([symbol], spyPerformance);
+    if (fastOpenBB.length > 0) {
+      return fastOpenBB[0];
+    }
+    return fetchSingleOpenBBFallbackStock(symbol, spyPerformance);
   }
 
   try {
@@ -1516,7 +2005,16 @@ export async function fetchStockData(symbol: string, spyPerformance?: { m1: numb
       scanTypes,
     };
 
-    const stockWithCatalyst = applyCatalystMetrics(baseStock);
+    const stockWithStockbee = applyStockbeeMetrics(baseStock, {
+      forceRecompute: true,
+      context: {
+        dayHigh: quote.regularMarketDayHigh || highs[highs.length - 1],
+        dayLow: quote.regularMarketDayLow || lows[lows.length - 1],
+        prior20DayHigh,
+        prior20DayLow,
+      },
+    });
+    const stockWithCatalyst = applyCatalystMetrics(stockWithStockbee);
     if (stockWithCatalyst.catalystScore >= 70 && !stockWithCatalyst.scanTypes.includes("Catalyst")) {
       stockWithCatalyst.scanTypes = [...stockWithCatalyst.scanTypes, "Catalyst"];
     }
@@ -1532,7 +2030,11 @@ export async function fetchStockData(symbol: string, spyPerformance?: { m1: numb
       return null;
     }
     console.error(`Error fetching ${symbol}:`, error);
-    return null;
+    const fastOpenBB = await fetchOpenBBQuoteSnapshotStocksFallback([symbol], spyPerformance);
+    if (fastOpenBB.length > 0) {
+      return fastOpenBB[0];
+    }
+    return fetchSingleOpenBBFallbackStock(symbol, spyPerformance);
   }
 }
 
@@ -1691,8 +2193,18 @@ export async function fetchStockNews(
       tags: deriveNewsTags(item.title || ""),
     }));
 
+    const openbbNewsItemsRaw = await fetchOpenBBNews(upperSymbol, 25);
+    const openbbNewsItems: NewsItem[] = openbbNewsItemsRaw.map((item) => ({
+      title: item.title,
+      link: item.link,
+      publisher: item.publisher,
+      publishedAt: item.publishedAt,
+      type: "STORY",
+      tags: deriveNewsTags(item.title || ""),
+    }));
+
     const rssFallbackItems = await fetchGoogleNewsRss(upperSymbol);
-    const combined = [...yahooNewsItems, ...rssFallbackItems]
+    const combined = [...yahooNewsItems, ...openbbNewsItems, ...rssFallbackItems]
       .sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime());
 
     const deduped: NewsItem[] = [];
@@ -1721,6 +2233,19 @@ export async function fetchStockNews(
     if (rssFallbackItems.length > 0) {
       await cacheNews(upperSymbol, rssFallbackItems);
       return selectNewsItems(rssFallbackItems, options);
+    }
+    const openbbNewsItemsRaw = await fetchOpenBBNews(upperSymbol, 20);
+    if (openbbNewsItemsRaw.length > 0) {
+      const openbbNewsItems: NewsItem[] = openbbNewsItemsRaw.map((item) => ({
+        title: item.title,
+        link: item.link,
+        publisher: item.publisher,
+        publishedAt: item.publishedAt,
+        type: "STORY",
+        tags: deriveNewsTags(item.title || ""),
+      }));
+      await cacheNews(upperSymbol, openbbNewsItems);
+      return selectNewsItems(openbbNewsItems, options);
     }
     return [];
   }
@@ -1836,6 +2361,58 @@ function mergeFinvizData(stock: StockData, finvizData: FinvizStockData | undefin
     analystRating: finvizData.analystRecom || stock.analystRating,
   };
 
+  const hasFinite = (value: number | undefined): value is number =>
+    typeof value === "number" && Number.isFinite(value);
+
+  // Quote/stooq fallbacks often miss momentum buckets; backfill from Finviz snapshots.
+  if ((!hasFinite(merged.momentum1M) || merged.momentum1M === 0) && hasFinite(finvizData.perfMonth)) {
+    merged.momentum1M = finvizData.perfMonth;
+  }
+  if ((!hasFinite(merged.momentum3M) || merged.momentum3M === 0) && hasFinite(finvizData.perfQuarter)) {
+    merged.momentum3M = finvizData.perfQuarter;
+  }
+  if ((!hasFinite(merged.momentum6M) || merged.momentum6M === 0) && hasFinite(finvizData.perfHalfY)) {
+    merged.momentum6M = finvizData.perfHalfY;
+  }
+  if ((!hasFinite(merged.momentum1Y) || merged.momentum1Y === 0) && hasFinite(finvizData.perfYear)) {
+    merged.momentum1Y = finvizData.perfYear;
+  }
+
+  const hasFlat52WRange =
+    hasFinite(merged.distanceFrom52WkHigh) &&
+    hasFinite(merged.distanceFrom52WkLow) &&
+    merged.distanceFrom52WkHigh === 0 &&
+    merged.distanceFrom52WkLow === 0;
+  if (hasFlat52WRange) {
+    if (hasFinite(finvizData.distanceFrom52WkHigh)) {
+      merged.distanceFrom52WkHigh = finvizData.distanceFrom52WkHigh;
+    }
+    if (hasFinite(finvizData.distanceFrom52WkLow)) {
+      merged.distanceFrom52WkLow = finvizData.distanceFrom52WkLow;
+    }
+  }
+
+  if ((!hasFinite(merged.distanceFrom20SMA) || merged.distanceFrom20SMA === 0) && hasFinite(finvizData.sma20)) {
+    merged.distanceFrom20SMA = finvizData.sma20;
+  }
+  if ((!hasFinite(merged.distanceFrom50SMA) || merged.distanceFrom50SMA === 0) && hasFinite(finvizData.sma50)) {
+    merged.distanceFrom50SMA = finvizData.sma50;
+  }
+  if ((!hasFinite(merged.distanceFrom200SMA) || merged.distanceFrom200SMA === 0) && hasFinite(finvizData.sma200)) {
+    merged.distanceFrom200SMA = finvizData.sma200;
+  }
+
+  if (merged.price > 0) {
+    merged.sma20 = calculateBaseFromDistance(merged.price, merged.distanceFrom20SMA);
+    merged.sma50 = calculateBaseFromDistance(merged.price, merged.distanceFrom50SMA);
+    merged.sma200 = calculateBaseFromDistance(merged.price, merged.distanceFrom200SMA);
+    merged.sma150 = (merged.sma50 + merged.sma200) / 2 || merged.price;
+    merged.ema10 = merged.sma20 || merged.price;
+    merged.ema20 = merged.sma20 || merged.price;
+    merged.ema50 = merged.sma50 || merged.price;
+    merged.ema200 = merged.sma200 || merged.price;
+  }
+
   const needsAdrBackfill = !Number.isFinite(merged.adrPercent) || merged.adrPercent <= 0;
   if (needsAdrBackfill) {
     const priceForAdr = merged.price > 0 ? merged.price : (finvizData.price ?? 0);
@@ -1848,7 +2425,8 @@ function mergeFinvizData(stock: StockData, finvizData: FinvizStockData | undefin
     }
   }
 
-  return applyCatalystMetrics(merged);
+  const withStockbee = applyStockbeeMetrics(merged, { forceRecompute: true });
+  return applyCatalystMetrics(withStockbee);
 }
 
 function rankFinvizCandidates(stocks: StockData[]): StockData[] {
@@ -1857,6 +2435,8 @@ function rankFinvizCandidates(stocks: StockData[]): StockData[] {
       a.catalystScore +
       (a.isEP ? 18 : 0) +
       (a.isQullaSetup ? 22 : 0) +
+      (a.isStockbeeSetup ? 18 : 0) +
+      ((a.stockbeeScore ?? 0) * 0.08) +
       Math.min(a.volumeRatio, 6) * 2 +
       Math.min(a.todayNewsCount ?? 0, 4) * 4 +
       (a.industryHeatScore ?? 0) * 0.08 +
@@ -1865,11 +2445,79 @@ function rankFinvizCandidates(stocks: StockData[]): StockData[] {
       b.catalystScore +
       (b.isEP ? 18 : 0) +
       (b.isQullaSetup ? 22 : 0) +
+      (b.isStockbeeSetup ? 18 : 0) +
+      ((b.stockbeeScore ?? 0) * 0.08) +
       Math.min(b.volumeRatio, 6) * 2 +
       Math.min(b.todayNewsCount ?? 0, 4) * 4 +
       (b.industryHeatScore ?? 0) * 0.08 +
       (b.sectorHeatScore ?? 0) * 0.05;
     return scoreB - scoreA;
+  });
+}
+
+function buildMomentumPercentileMap(
+  stocks: StockData[],
+  selector: (stock: StockData) => number
+): Map<string, number> {
+  const ranked = stocks
+    .map((stock) => ({ symbol: stock.symbol, value: selector(stock) }))
+    .filter((entry) => Number.isFinite(entry.value))
+    .sort((a, b) => b.value - a.value);
+
+  const total = ranked.length;
+  const percentileMap = new Map<string, number>();
+  if (total === 0) return percentileMap;
+
+  for (let index = 0; index < ranked.length; index++) {
+    const percentile = ((index + 1) / total) * 100;
+    percentileMap.set(ranked[index].symbol, percentile);
+  }
+
+  return percentileMap;
+}
+
+function applyStockbeeQullamaggieAlignment(
+  stocks: StockData[],
+  thresholdPercentile: number = 2
+): StockData[] {
+  if (stocks.length === 0) return stocks;
+
+  const m1Percentiles = buildMomentumPercentileMap(stocks, (s) => s.momentum1M ?? Number.NEGATIVE_INFINITY);
+  const m3Percentiles = buildMomentumPercentileMap(stocks, (s) => s.momentum3M ?? Number.NEGATIVE_INFINITY);
+  const m6Percentiles = buildMomentumPercentileMap(stocks, (s) => s.momentum6M ?? Number.NEGATIVE_INFINITY);
+
+  return stocks.map((stock) => {
+    const withStockbee = applyStockbeeMetrics(stock);
+    const m1 = m1Percentiles.get(stock.symbol) ?? 100;
+    const m3 = m3Percentiles.get(stock.symbol) ?? 100;
+    const m6 = m6Percentiles.get(stock.symbol) ?? 100;
+
+    const month1 = m1 <= thresholdPercentile && (stock.momentum1M ?? 0) > 0;
+    const month3 = m3 <= thresholdPercentile && (stock.momentum3M ?? 0) > 0;
+    const month6 = m6 <= thresholdPercentile && (stock.momentum6M ?? 0) > 0;
+    const alignedCount = Number(month1) + Number(month3) + Number(month6);
+
+    const alignment: QullaMomentumAlignment = {
+      month1,
+      month3,
+      month6,
+      month1Percentile: m1,
+      month3Percentile: m3,
+      month6Percentile: m6,
+      thresholdPercentile,
+      alignedCount,
+      alignsWithQullamaggie: alignedCount > 0,
+    };
+
+    const stockbee: StockbeeSignals = {
+      ...(withStockbee.stockbee as StockbeeSignals),
+      qullaAlignment: alignment,
+    };
+
+    return {
+      ...withStockbee,
+      stockbee,
+    };
   });
 }
 
@@ -1913,14 +2561,37 @@ export async function runFullScan(symbols: string[] = STOCK_UNIVERSE): Promise<S
     }
   }
 
+  const stillMissingAfterYahooQuote = symbols.filter((symbol) => !baseResultsMap.has(symbol.toUpperCase()));
+  if (stillMissingAfterYahooQuote.length > 0 && isOpenBBEnabled()) {
+    const openbbSymbols = stillMissingAfterYahooQuote.slice(0, OPENBB_FALLBACK_LIMIT);
+    const openbbFallbackStocks = await fetchOpenBBQuoteSnapshotStocksFallback(openbbSymbols, spyPerformance);
+    for (const stock of openbbFallbackStocks) {
+      baseResultsMap.set(stock.symbol.toUpperCase(), stock);
+    }
+    if (openbbFallbackStocks.length > 0) {
+      console.log(`OpenBB quote fallback added ${openbbFallbackStocks.length} stocks`);
+    }
+    if (stillMissingAfterYahooQuote.length > OPENBB_FALLBACK_LIMIT) {
+      console.warn(
+        `OpenBB fallback limited to ${OPENBB_FALLBACK_LIMIT}/${stillMissingAfterYahooQuote.length} symbols`
+      );
+    }
+  }
+
   const stillMissingSymbols = symbols.filter((symbol) => !baseResultsMap.has(symbol.toUpperCase()));
   if (stillMissingSymbols.length > 0) {
-    const stooqFallbackStocks = await fetchStooqSnapshotStocks(stillMissingSymbols, spyPerformance);
+    const stooqSymbols = stillMissingSymbols.slice(0, STOOQ_FALLBACK_LIMIT);
+    const stooqFallbackStocks = await fetchStooqSnapshotStocks(stooqSymbols, spyPerformance);
     for (const stock of stooqFallbackStocks) {
       baseResultsMap.set(stock.symbol.toUpperCase(), stock);
     }
     if (stooqFallbackStocks.length > 0) {
       console.log(`Stooq fallback added ${stooqFallbackStocks.length} stocks`);
+    }
+    if (stillMissingSymbols.length > STOOQ_FALLBACK_LIMIT) {
+      console.warn(
+        `Stooq fallback limited to ${STOOQ_FALLBACK_LIMIT}/${stillMissingSymbols.length} symbols`
+      );
     }
   }
 
@@ -1976,6 +2647,8 @@ export async function runFullScan(symbols: string[] = STOCK_UNIVERSE): Promise<S
   for (const stock of results) {
     stock.proxyPlays = findProxyPlaysWithIndex(stock, proxyPlayIndex);
   }
+
+  results = applyStockbeeQullamaggieAlignment(results, 2);
 
   return {
     stocks: results,
@@ -2108,9 +2781,10 @@ export async function runFullScanWithCache(
           catalystScore: stock.catalystScore ?? 0,
           catalystSignals: Array.isArray(stock.catalystSignals) ? stock.catalystSignals : [],
         }));
+        const withAlignment = applyStockbeeQullamaggieAlignment(normalizedStocks, 2);
         return {
           ...cachedResults,
-          stocks: normalizedStocks,
+          stocks: withAlignment,
           fromCache: true,
           cacheStats: stats,
         };
@@ -2146,9 +2820,10 @@ export async function runFullScanWithCache(
         catalystScore: stock.catalystScore ?? 0,
         catalystSignals: Array.isArray(stock.catalystSignals) ? stock.catalystSignals : [],
       }));
+      const withAlignment = applyStockbeeQullamaggieAlignment(normalizedStocks, 2);
       return {
         ...staleCachedResults,
-        stocks: normalizedStocks,
+        stocks: withAlignment,
         fromCache: true,
         cacheStats: stats,
       };
@@ -2190,8 +2865,9 @@ export async function fetchFinvizDataWithCache(
   // Check cache for already fetched data
   const cachedData = await getMultipleCachedFinvizData<FinvizStockData>(normalizedSymbols);
 
-  // If cached entries were created before our parser fix, they may miss ATR/Volatility.
-  // Treat those as stale so we refetch and can compute ADR%.
+  // If cached entries were created before parser fixes, they may miss ATR/Volatility
+  // or contain bad 52W distance values from mixed "price + percent" cells.
+  // Treat those as stale so we refetch.
   let staleCount = 0;
   for (const symbol of normalizedSymbols) {
     const data = cachedData.get(symbol);
@@ -2203,7 +2879,13 @@ export async function fetchFinvizDataWithCache(
       (Number.isFinite(atr) && atr > 0) ||
       (Number.isFinite(volMonth) && volMonth > 0) ||
       (Number.isFinite(volWeek) && volWeek > 0);
-    if (!hasAdrInputs) {
+    const highDist = data.distanceFrom52WkHigh;
+    const hasFiniteHighDist = typeof highDist === "number" && Number.isFinite(highDist);
+    const hasPlausible52WHigh =
+      !hasFiniteHighDist ||
+      (highDist >= -100 && highDist <= 50);
+
+    if (!hasAdrInputs || !hasPlausible52WHigh) {
       cachedData.delete(symbol);
       staleCount += 1;
     }
@@ -2265,34 +2947,46 @@ export async function refreshStockList(): Promise<string[]> {
 
 // Fetch only chart data for a symbol (lightweight, no fundamentals)
 export async function fetchChartOnly(symbol: string): Promise<CandleData[]> {
-  if (isYahooRateLimited()) return [];
+  if (!isYahooRateLimited()) {
+    try {
+      const historical = await withTimeout(
+        yahooFinance.chart(symbol.toUpperCase(), {
+          period1: new Date(Date.now() - 120 * 24 * 60 * 60 * 1000), // ~4 months
+          period2: new Date(),
+          interval: "1d",
+        }),
+        YAHOO_TIMEOUT_MS,
+        `chart-${symbol}`,
+      );
 
-  try {
-    const historical = await withTimeout(
-      yahooFinance.chart(symbol.toUpperCase(), {
-        period1: new Date(Date.now() - 120 * 24 * 60 * 60 * 1000), // ~4 months
-        period2: new Date(),
-        interval: "1d",
-      }),
-      YAHOO_TIMEOUT_MS,
-      `chart-${symbol}`,
-    );
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const data = historical as any;
-    if (!data.quotes || data.quotes.length < 10) return [];
-
-    return (data.quotes as YahooQuote[]).slice(-100).map((q) => ({
-      time: new Date(q.date).toISOString().split("T")[0],
-      open: q.open || 0,
-      high: q.high || 0,
-      low: q.low || 0,
-      close: q.close || 0,
-      volume: q.volume || 0,
-    }));
-  } catch {
-    return [];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const data = historical as any;
+      if (data.quotes && data.quotes.length >= 10) {
+        return (data.quotes as YahooQuote[]).slice(-100).map((q) => ({
+          time: new Date(q.date).toISOString().split("T")[0],
+          open: q.open || 0,
+          high: q.high || 0,
+          low: q.low || 0,
+          close: q.close || 0,
+          volume: q.volume || 0,
+        }));
+      }
+    } catch {
+      // fall through to OpenBB fallback
+    }
   }
+
+  const openbbCandles = await fetchOpenBBHistoricalCandles(symbol.toUpperCase(), 180);
+  if (openbbCandles.length >= 10) {
+    return openbbCandles.slice(-100);
+  }
+
+  const stooqCandles = await fetchStooqHistoricalCandles(symbol.toUpperCase(), 180);
+  if (stooqCandles.length >= 10) {
+    return stooqCandles.slice(-100);
+  }
+
+  return [];
 }
 
 // Export additional utilities

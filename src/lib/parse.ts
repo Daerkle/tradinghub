@@ -23,7 +23,17 @@ let initialized = false;
 function getParseServerURL(): string {
   const configuredClientUrl = process.env.NEXT_PUBLIC_PARSE_SERVER_URL?.trim();
   if (configuredClientUrl) {
-    return configuredClientUrl;
+    // Guard against malformed values (e.g. plain "sid")
+    if (/^https?:\/\//i.test(configuredClientUrl)) {
+      try {
+        const parsed = new URL(configuredClientUrl);
+        const normalizedPath = parsed.pathname.replace(/\/+$/, "");
+        const base = `${parsed.protocol}//${parsed.host}${normalizedPath}`;
+        return base.endsWith("/parse") ? base : `${base}/parse`;
+      } catch {
+        // fall through to host-derived URL
+      }
+    }
   }
 
   // Always derive from current browser location for client-side

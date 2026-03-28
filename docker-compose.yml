@@ -13,17 +13,45 @@ services:
     container_name: tradinghub_app
     ports:
       - "${APP_PORT:-3001}:3000"
+    volumes:
+      - tradinghub_app_cache:/app/.cache
     environment:
-      - NODE_ENV=production
-      - NEXT_PUBLIC_PARSE_APP_ID=tradenote123
-      - NEXT_PUBLIC_PARSE_JS_KEY=tradenote123
-      - NEXT_PUBLIC_PARSE_SERVER_URL=http://10.10.20.200:28080/parse
-      - REDIS_URL=redis://redis:6379
-      - INTERNAL_PARSE_SERVER_URL=http://backend:28080/parse
-      - MASTER_KEY=tradenote123
-      - DATABASE_URL=postgresql://tradenote:tradenote_archive@postgres:5432/setup_archive
-      - IB_FLEX_TOKEN=${IB_FLEX_TOKEN}
-      - IB_FLEX_QUERY_ID=${IB_FLEX_QUERY_ID}
+      NODE_ENV: production
+      APP_CACHE_DIR: /app/.cache
+      NEXT_PUBLIC_PARSE_APP_ID: ${PARSE_APP_ID:-tradenote123}
+      NEXT_PUBLIC_PARSE_JS_KEY: ${PARSE_JS_KEY:-tradenote123}
+      NEXT_PUBLIC_PARSE_SERVER_URL: ${NEXT_PUBLIC_PARSE_SERVER_URL:-http://localhost:28080/parse}
+      REDIS_URL: redis://redis:6379
+      INTERNAL_PARSE_SERVER_URL: http://backend:28080/parse
+      MASTER_KEY: ${PARSE_MASTER_KEY:-tradenote123}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-tradenote}:${POSTGRES_PASSWORD:-tradenote_archive}@postgres:5432/${POSTGRES_DB:-setup_archive}
+      IB_FLEX_TOKEN: ${IB_FLEX_TOKEN:-}
+      IB_FLEX_QUERY_ID: ${IB_FLEX_QUERY_ID:-}
+      YAHOO_PROXY_PRIMARY: ${YAHOO_PROXY_PRIMARY:-}
+      YAHOO_PROXY_TIMEOUT_MS: ${YAHOO_PROXY_TIMEOUT_MS:-}
+      YAHOO_PROXY_MAX_RETRIES: ${YAHOO_PROXY_MAX_RETRIES:-}
+      YAHOO_PROXY_SESSION_TTL_MS: ${YAHOO_PROXY_SESSION_TTL_MS:-}
+      YAHOO_PROXY_SESSION_MAX_REQUESTS: ${YAHOO_PROXY_SESSION_MAX_REQUESTS:-}
+      YAHOO_PROXY_RETRY_BASE_MS: ${YAHOO_PROXY_RETRY_BASE_MS:-}
+      YAHOO_PROXY_RETRY_MAX_MS: ${YAHOO_PROXY_RETRY_MAX_MS:-}
+      SCRAPERAPI_KEY: ${SCRAPERAPI_KEY:-}
+      SCRAPERAPI_ENDPOINT: ${SCRAPERAPI_ENDPOINT:-}
+      SCRAPERAPI_COUNTRY: ${SCRAPERAPI_COUNTRY:-}
+      SCRAPERAPI_PREMIUM: ${SCRAPERAPI_PREMIUM:-}
+      BRIGHTDATA_PROXY_HOST: ${BRIGHTDATA_PROXY_HOST:-}
+      BRIGHTDATA_PROXY_PORT: ${BRIGHTDATA_PROXY_PORT:-}
+      BRIGHTDATA_PROXY_USERNAME: ${BRIGHTDATA_PROXY_USERNAME:-}
+      BRIGHTDATA_PROXY_PASSWORD: ${BRIGHTDATA_PROXY_PASSWORD:-}
+      BRIGHTDATA_PROXY_PROTOCOL: ${BRIGHTDATA_PROXY_PROTOCOL:-}
+      OPENBB_ENABLED: ${OPENBB_ENABLED:-true}
+      OPENBB_BASE_URL: ${OPENBB_BASE_URL:-}
+      OPENBB_API_PREFIX: ${OPENBB_API_PREFIX:-}
+      OPENBB_PROVIDER: ${OPENBB_PROVIDER:-yfinance}
+      OPENBB_NEWS_PROVIDER: ${OPENBB_NEWS_PROVIDER:-fmp}
+      OPENBB_API_KEY: ${OPENBB_API_KEY:-}
+      OPENBB_TIMEOUT_MS: ${OPENBB_TIMEOUT_MS:-20000}
+      OPENBB_CONCURRENCY: ${OPENBB_CONCURRENCY:-4}
+      OPENBB_MAX_SYMBOLS_PER_SCAN: ${OPENBB_MAX_SYMBOLS_PER_SCAN:-1000}
     depends_on:
       backend:
         condition: service_healthy
@@ -31,6 +59,8 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+      openbb:
+        condition: service_started
     networks:
       - tradinghub_net
     restart: unless-stopped
@@ -46,17 +76,17 @@ services:
     image: ghcr.io/daerkle/tradenote-backend:latest
     container_name: tradinghub_backend
     ports:
-      - "28080:28080"
+      - "${BACKEND_PORT:-28080}:28080"
     environment:
-      - MONGO_URI=mongodb://tradenote:tradenote@mongo:27017/tradenote?authSource=admin
-      - TRADENOTE_DATABASE=tradenote
-      - APP_ID=tradenote123
-      - MASTER_KEY=tradenote123
-      - TRADENOTE_PORT=28080
-      - PARSE_SERVER_ALLOW_CLIENT_CLASS_CREATION=1
-      - allowClientClassCreation=true
-      - PARSE_SERVER_SESSION_LENGTH=2592000
-      - PARSE_SERVER_EXPIRE_INACTIVE_SESSIONS=false
+      MONGO_URI: mongodb://${MONGO_ROOT_USERNAME:-tradenote}:${MONGO_ROOT_PASSWORD:-tradenote}@mongo:27017/${MONGO_DB:-tradenote}?authSource=admin
+      TRADENOTE_DATABASE: ${MONGO_DB:-tradenote}
+      APP_ID: ${PARSE_APP_ID:-tradenote123}
+      MASTER_KEY: ${PARSE_MASTER_KEY:-tradenote123}
+      TRADENOTE_PORT: 28080
+      PARSE_SERVER_ALLOW_CLIENT_CLASS_CREATION: 1
+      allowClientClassCreation: true
+      PARSE_SERVER_SESSION_LENGTH: 2592000
+      PARSE_SERVER_EXPIRE_INACTIVE_SESSIONS: false
     depends_on:
       mongo:
         condition: service_healthy
@@ -75,14 +105,14 @@ services:
     image: mongo:7
     container_name: tradinghub_mongo
     ports:
-      - "27017:27017"
+      - "${MONGO_PORT:-27017}:27017"
     volumes:
       - tradinghub_mongo_data:/data/db
       - tradinghub_mongo_config:/data/configdb
     environment:
-      - MONGO_INITDB_ROOT_USERNAME=tradenote
-      - MONGO_INITDB_ROOT_PASSWORD=tradenote
-      - MONGO_INITDB_DATABASE=tradenote
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:-tradenote}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-tradenote}
+      MONGO_INITDB_DATABASE: ${MONGO_DB:-tradenote}
     networks:
       - tradinghub_net
     restart: unless-stopped
@@ -98,13 +128,13 @@ services:
     image: postgres:16-alpine
     container_name: tradinghub_postgres
     ports:
-      - "5433:5432"
+      - "${POSTGRES_PORT:-5433}:5432"
     volumes:
       - tradinghub_postgres_data:/var/lib/postgresql/data
     environment:
-      - POSTGRES_USER=tradenote
-      - POSTGRES_PASSWORD=tradenote_archive
-      - POSTGRES_DB=setup_archive
+      POSTGRES_USER: ${POSTGRES_USER:-tradenote}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tradenote_archive}
+      POSTGRES_DB: ${POSTGRES_DB:-setup_archive}
     networks:
       - tradinghub_net
     restart: unless-stopped
@@ -120,7 +150,7 @@ services:
     image: redis:7-alpine
     container_name: tradinghub_redis
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6379}:6379"
     volumes:
       - tradinghub_redis_data:/data
     command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
@@ -133,10 +163,31 @@ services:
       timeout: 5s
       retries: 5
 
+  # OpenBB API (separate data provider instance)
+  openbb:
+    build:
+      context: .
+      dockerfile: Dockerfile.openbb
+    image: tradejournal-openbb:latest
+    container_name: tradinghub_openbb
+    ports:
+      - "${OPENBB_PORT:-6900}:6900"
+    volumes:
+      - tradinghub_openbb_data:/root/.openbb_platform
+    networks:
+      - tradinghub_net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:6900', timeout=5)\""]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+
 networks:
   tradinghub_net:
     driver: bridge
-    name: tradinghub_network
+    name: tradinghub_network_v3
 
 volumes:
   tradinghub_mongo_data:
@@ -150,4 +201,10 @@ volumes:
     driver: local
   tradinghub_postgres_data:
     name: tradinghub_postgres_data
+    driver: local
+  tradinghub_openbb_data:
+    name: tradinghub_openbb_data
+    driver: local
+  tradinghub_app_cache:
+    name: tradinghub_app_cache
     driver: local

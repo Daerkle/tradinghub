@@ -60,6 +60,7 @@ interface ScannerToolbarProps {
   momentum3mCount: number;
   momentum6mCount: number;
   setupCount: number;
+  stockbeeCount: number;
   rsCount: number;
   minerviniCount: number;
   canslimCount: number;
@@ -72,7 +73,7 @@ export function ScannerToolbar({
   compareMode, setCompareMode, selectedCount, onShowCompare,
   displayCount, viewMode, setViewMode, cardsPerRow, setCardsPerRow,
   copiedList, setCopiedList, streamedStocks, displayData,
-  epCount, momentum1mCount, momentum3mCount, momentum6mCount, setupCount, rsCount, minerviniCount, canslimCount, catalystCount,
+  epCount, momentum1mCount, momentum3mCount, momentum6mCount, setupCount, stockbeeCount, rsCount, minerviniCount, canslimCount, catalystCount,
   clearSelection,
 }: ScannerToolbarProps) {
   const getStocksForExport = (listName: string): StockData[] => {
@@ -83,6 +84,7 @@ export function ScannerToolbar({
       case "3m": return filterByScanType(streamedStocks, "3m");
       case "6m": return filterByScanType(streamedStocks, "6m");
       case "setup": return filterByScanType(streamedStocks, "qullamaggie");
+      case "stockbee": return filterByScanType(streamedStocks, "stockbee");
       case "rs": return filterByScanType(streamedStocks, "rs");
       case "minervini": return filterByScanType(streamedStocks, "minervini");
       case "canslim": return filterByScanType(streamedStocks, "canslim");
@@ -178,6 +180,7 @@ export function ScannerToolbar({
           { key: "3m", label: "3M", count: momentum3mCount, icon: TrendingUp, color: "text-zinc-400" },
           { key: "6m", label: "6M", count: momentum6mCount, icon: Target, color: "text-zinc-400" },
           { key: "setup", label: "Setup", count: setupCount, icon: Star, color: "text-zinc-400" },
+          { key: "stockbee", label: "Stockbee", count: stockbeeCount, icon: Zap, color: "text-zinc-400" },
           { key: "rs", label: "RS", count: rsCount, icon: TrendingUp, color: "text-zinc-400" },
           { key: "minervini", label: "Minervini", count: minerviniCount, icon: TrendingUp, color: "text-zinc-400" },
           { key: "canslim", label: "CANSLIM", count: canslimCount, icon: Target, color: "text-zinc-400" },

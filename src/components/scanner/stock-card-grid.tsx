@@ -1,7 +1,7 @@
 "use client";
 
 import {
-  Zap, Star, ExternalLink, BarChart3, ArrowUpRight, ArrowDownRight,
+  ExternalLink, BarChart3, ArrowUpRight, ArrowDownRight,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -37,6 +37,9 @@ function StockCard({ stock, onClick }: { stock: StockData; onClick?: () => void 
             )}
             {stock.isQullaSetup && (
               <Badge variant="secondary" className="bg-zinc-800 text-zinc-300 text-[10px] px-1 py-0 border border-zinc-700">Q</Badge>
+            )}
+            {stock.isStockbeeSetup && (
+              <Badge variant="secondary" className="bg-zinc-800 text-zinc-300 text-[10px] px-1 py-0 border border-zinc-700">SB</Badge>
             )}
           </div>
           <div className="text-right font-mono">

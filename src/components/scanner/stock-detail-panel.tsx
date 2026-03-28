@@ -2,17 +2,27 @@
 
 import { useState, useEffect } from "react";
 import {
-  BarChart3, Star, Building2, Users, Calendar, Newspaper, ExternalLink,
+  Activity, BarChart3, Star, Building2, Users, Calendar, Newspaper, ExternalLink,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import { translateNewsTag } from "@/lib/news-tags";
 import { StockChart } from "@/components/scanner/stock-chart";
 import { formatNumber, getRSRatingColor, getSetupScoreColor } from "@/components/scanner/metric-tooltip";
 import type { StockData, NewsItem } from "@/types/scanner";
+import type { OptionsOverview } from "@/types/options";
+import type { SeasonalityOverview } from "@/types/seasonality";
 
 function NewsSection({ symbol }: { symbol: string }) {
   const [news, setNews] = useState<NewsItem[]>([]);
@@ -104,6 +114,567 @@ function NewsSection({ symbol }: { symbol: string }) {
           )}
         </a>
       ))}
+    </div>
+  );
+}
+
+function formatMoney(value: number | null | undefined, decimals = 2): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return "-";
+  return value.toLocaleString("de-DE", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  });
+}
+
+function formatCompactNumber(value: number | null | undefined, decimals = 1): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return "-";
+
+  const abs = Math.abs(value);
+  const sign = value < 0 ? "-" : "";
+
+  if (abs >= 1_000_000_000) return `${sign}${(abs / 1_000_000_000).toFixed(decimals)}B`;
+  if (abs >= 1_000_000) return `${sign}${(abs / 1_000_000).toFixed(decimals)}M`;
+  if (abs >= 1_000) return `${sign}${(abs / 1_000).toFixed(decimals)}K`;
+  return `${sign}${abs.toFixed(decimals)}`;
+}
+
+function formatCompactCurrency(value: number | null | undefined, decimals = 1): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return "-";
+  return `$${formatCompactNumber(value, decimals)}`;
+}
+
+function formatMetricPercent(value: number | null | undefined, decimals = 1): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return "-";
+  return `${value >= 0 ? "+" : ""}${value.toFixed(decimals)}%`;
+}
+
+function formatSkew(value: number | null | undefined, decimals = 1): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return "-";
+  return `${value >= 0 ? "+" : ""}${value.toFixed(decimals)} pp`;
+}
+
+function formatExpiryLabel(expiration: string | null | undefined): string {
+  if (!expiration) return "-";
+  const date = new Date(`${expiration}T00:00:00Z`);
+  if (Number.isNaN(date.getTime())) return expiration;
+  return date.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "2-digit" });
+}
+
+function getBiasLabel(bias: OptionsOverview["bias"]): string {
+  switch (bias) {
+    case "call-skewed":
+      return "Call-lastig";
+    case "put-skewed":
+      return "Put-lastig";
+    default:
+      return "Ausgeglichen";
+  }
+}
+
+function getBiasTone(bias: OptionsOverview["bias"]): string {
+  switch (bias) {
+    case "call-skewed":
+      return "bg-green-500/10 text-green-300 border-green-500/20";
+    case "put-skewed":
+      return "bg-red-500/10 text-red-300 border-red-500/20";
+    default:
+      return "bg-zinc-800 text-zinc-300 border-zinc-700";
+  }
+}
+
+function SeasonalitySection({ symbol }: { symbol: string }) {
+  const [data, setData] = useState<SeasonalityOverview | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadSeasonality() {
+      setLoading(true);
+      setError(null);
+
+      try {
+        const response = await fetch(`/api/scanner/seasonality/${encodeURIComponent(symbol)}`);
+        const payload = await response.json().catch(() => null);
+        if (!response.ok) {
+          throw new Error(payload?.error || "Seasonality nicht verfuegbar");
+        }
+        if (!cancelled) {
+          setData(payload as SeasonalityOverview);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "Seasonality konnte nicht geladen werden");
+          setData(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    loadSeasonality();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [symbol]);
+
+  if (loading) {
+    return (
+      <Card className="p-4">
+        <div className="space-y-3">
+          <Skeleton className="h-6 w-44" />
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            {Array.from({ length: 4 }).map((_, index) => (
+              <Skeleton key={index} className="h-18 w-full" />
+            ))}
+          </div>
+          <Skeleton className="h-36 w-full" />
+        </div>
+      </Card>
+    );
+  }
+
+  if (error || !data) {
+    return (
+      <Card className="p-4">
+        <h4 className="text-sm font-medium">Seasonality</h4>
+        <p className="mt-2 text-sm text-muted-foreground">
+          {error || "Keine Seasonality-Daten verfuegbar."}
+        </p>
+      </Card>
+    );
+  }
+
+  const currentMonth = data.summary.currentMonthSeasonality;
+  const currentWeekday = data.summary.currentWeekdaySeasonality;
+
+  return (
+    <div className="space-y-4">
+      <Card className="p-4">
+        <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+          <div>
+            <h4 className="text-sm font-medium">Seasonality</h4>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {data.historyYears} Jahre / {data.tradingDays} Handelstage Tageshistorie
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Badge variant="outline">Aktueller Monat {data.currentContext.monthLabel}</Badge>
+            <Badge variant="outline">Heute {data.currentContext.weekdayLabel}</Badge>
+          </div>
+        </div>
+
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <OptionsMetric
+            label="Bester Monat"
+            value={data.summary.bestMonth ? `${data.summary.bestMonth.label} ${formatMetricPercent(data.summary.bestMonth.avgReturnPct, 2)}` : "-"}
+            tone="text-green-300"
+          />
+          <OptionsMetric
+            label="Schwaechster Monat"
+            value={data.summary.worstMonth ? `${data.summary.worstMonth.label} ${formatMetricPercent(data.summary.worstMonth.avgReturnPct, 2)}` : "-"}
+            tone="text-red-300"
+          />
+          <OptionsMetric
+            label="Aktueller Monat"
+            value={currentMonth ? `${formatMetricPercent(currentMonth.avgReturnPct, 2)} / ${currentMonth.positiveRatePct.toFixed(0)}% up` : "-"}
+            tone={currentMonth && currentMonth.avgReturnPct >= 0 ? "text-green-300" : "text-red-300"}
+          />
+          <OptionsMetric
+            label="Aktueller Wochentag"
+            value={currentWeekday ? `${formatMetricPercent(currentWeekday.avgReturnPct, 2)} / ${currentWeekday.positiveRatePct.toFixed(0)}% up` : "-"}
+            tone={currentWeekday && currentWeekday.avgReturnPct >= 0 ? "text-green-300" : "text-red-300"}
+          />
+        </div>
+
+        <div className="mt-4 grid gap-4 xl:grid-cols-2">
+          <div className="rounded-lg border border-white/10 bg-black/10 p-3">
+            <div className="mb-2 text-sm font-medium">Monate</div>
+            <div className="space-y-2">
+              {data.monthly.map((bucket) => (
+                <div key={bucket.index} className="flex items-center justify-between text-sm">
+                  <span>{bucket.label}</span>
+                  <span className={cn(bucket.avgReturnPct >= 0 ? "text-green-300" : "text-red-300")}>
+                    {formatMetricPercent(bucket.avgReturnPct, 2)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-white/10 bg-black/10 p-3">
+            <div className="mb-2 text-sm font-medium">Wochentage</div>
+            <div className="space-y-2">
+              {data.weekday.map((bucket) => (
+                <div key={bucket.index} className="flex items-center justify-between text-sm">
+                  <span>{bucket.label}</span>
+                  <span className={cn(bucket.avgReturnPct >= 0 ? "text-green-300" : "text-red-300")}>
+                    {formatMetricPercent(bucket.avgReturnPct, 2)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </Card>
+
+      <Card className="p-4">
+        <div className="mb-3 flex items-center justify-between">
+          <h5 className="text-sm font-medium">Tagesfenster im Monat</h5>
+          <span className="text-xs text-muted-foreground">Beste / schlechteste Kalendertage</span>
+        </div>
+        <div className="grid gap-4 xl:grid-cols-2">
+          <div className="rounded-lg border border-green-500/20 bg-green-500/5 p-3">
+            <div className="mb-2 text-sm font-medium text-green-300">Stark</div>
+            <div className="space-y-2">
+              {data.summary.strongestDaysOfMonth.map((bucket) => (
+                <div key={`strong-${bucket.day}`} className="flex items-center justify-between text-sm">
+                  <span>Tag {bucket.day}</span>
+                  <span>{formatMetricPercent(bucket.avgReturnPct, 2)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3">
+            <div className="mb-2 text-sm font-medium text-red-300">Schwach</div>
+            <div className="space-y-2">
+              {data.summary.weakestDaysOfMonth.map((bucket) => (
+                <div key={`weak-${bucket.day}`} className="flex items-center justify-between text-sm">
+                  <span>Tag {bucket.day}</span>
+                  <span>{formatMetricPercent(bucket.avgReturnPct, 2)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <OptionsMetric label="1M Return" value={formatMetricPercent(data.trailingReturnPct.month1, 2)} />
+          <OptionsMetric label="3M Return" value={formatMetricPercent(data.trailingReturnPct.month3, 2)} />
+          <OptionsMetric label="6M Return" value={formatMetricPercent(data.trailingReturnPct.month6, 2)} />
+          <OptionsMetric label="1Y Return" value={formatMetricPercent(data.trailingReturnPct.year1, 2)} />
+        </div>
+      </Card>
+
+      <p className="text-xs text-muted-foreground">{data.disclaimer}</p>
+    </div>
+  );
+}
+
+function OptionsMetric({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone?: string;
+}) {
+  return (
+    <div className="rounded-lg border border-white/10 bg-black/10 p-3">
+      <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</div>
+      <div className={cn("mt-1 text-lg font-semibold", tone)}>{value}</div>
+    </div>
+  );
+}
+
+function OptionsSection({ symbol }: { symbol: string }) {
+  const [data, setData] = useState<OptionsOverview | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadOptions() {
+      setLoading(true);
+      setError(null);
+
+      try {
+        const response = await fetch(`/api/scanner/options/${encodeURIComponent(symbol)}`);
+        const payload = await response.json().catch(() => null);
+        if (!response.ok) {
+          throw new Error(payload?.error || "Optionsdaten nicht verfuegbar");
+        }
+        if (!cancelled) {
+          setData(payload as OptionsOverview);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "Optionsdaten konnten nicht geladen werden");
+          setData(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    loadOptions();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [symbol]);
+
+  if (loading) {
+    return (
+      <Card className="p-4">
+        <div className="space-y-3">
+          <Skeleton className="h-6 w-48" />
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            {Array.from({ length: 8 }).map((_, index) => (
+              <Skeleton key={index} className="h-20 w-full" />
+            ))}
+          </div>
+          <Skeleton className="h-44 w-full" />
+        </div>
+      </Card>
+    );
+  }
+
+  if (error || !data) {
+    return (
+      <Card className="p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h4 className="text-sm font-medium flex items-center gap-2">
+              <Activity className="h-4 w-4" />
+              Options Positioning
+            </h4>
+            <p className="mt-2 text-sm text-muted-foreground">
+              {error || "Keine kostenlosen Optionsdaten verfuegbar."}
+            </p>
+          </div>
+          <a
+            href={`https://finance.yahoo.com/quote/${encodeURIComponent(symbol)}/options`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-xs text-muted-foreground underline hover:text-foreground"
+          >
+            Yahoo extern
+          </a>
+        </div>
+      </Card>
+    );
+  }
+
+  const netGexTone =
+    data.summary.netGexEstimate === null
+      ? "text-zinc-300"
+      : data.summary.netGexEstimate >= 0
+        ? "text-green-300"
+        : "text-red-300";
+  const skewTone =
+    data.summary.skewPct === null
+      ? "text-zinc-300"
+      : data.summary.skewPct >= 0
+        ? "text-red-300"
+        : "text-green-300";
+
+  return (
+    <div className="space-y-4">
+      <Card className="p-4">
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div>
+            <h4 className="text-sm font-medium flex items-center gap-2">
+              <Activity className="h-4 w-4" />
+              Options Positioning
+            </h4>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Gratis-Chain + abgeleitete Levels aus {data.trackedExpiries}/{data.availableExpiries} Expiries bis {data.horizonDays} DTE
+            </p>
+          </div>
+          <a
+            href={`https://finance.yahoo.com/quote/${encodeURIComponent(symbol)}/options`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-xs text-muted-foreground underline hover:text-foreground"
+          >
+            Chain extern oeffnen
+          </a>
+        </div>
+
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <OptionsMetric label="P/C OI" value={formatNumber(data.summary.putCallOiRatio, 2)} />
+          <OptionsMetric label="P/C Vol" value={formatNumber(data.summary.putCallVolumeRatio, 2)} />
+          <OptionsMetric label="Call Wall" value={data.summary.callWall !== null ? formatMoney(data.summary.callWall, 0) : "-"} />
+          <OptionsMetric label="Put Wall" value={data.summary.putWall !== null ? formatMoney(data.summary.putWall, 0) : "-"} />
+          <OptionsMetric label="Max Pain" value={data.summary.maxPain !== null ? formatMoney(data.summary.maxPain, 0) : "-"} />
+          <OptionsMetric label="ATM IV" value={data.summary.atmIvPct !== null ? `${data.summary.atmIvPct.toFixed(1)}%` : "-"} />
+          <OptionsMetric label="Skew" value={formatSkew(data.summary.skewPct)} tone={skewTone} />
+          <OptionsMetric label="Net GEX est." value={formatCompactNumber(data.summary.netGexEstimate)} tone={netGexTone} />
+          <OptionsMetric label="Expected Move" value={data.summary.expectedMoveUsd !== null ? `${formatMoney(data.summary.expectedMoveUsd, 2)} / ${formatMetricPercent(data.summary.expectedMovePct, 2)}` : "-"} />
+          <OptionsMetric label="Gamma Flip" value={data.summary.gammaFlipZone !== null ? formatMoney(data.summary.gammaFlipZone, 0) : "-"} />
+          <OptionsMetric label="Call OI Fokus" value={data.summary.callOiConcentrationPct !== null ? `${data.summary.callOiConcentrationPct.toFixed(0)}%` : "-"} />
+          <OptionsMetric label="Put OI Fokus" value={data.summary.putOiConcentrationPct !== null ? `${data.summary.putOiConcentrationPct.toFixed(0)}%` : "-"} />
+        </div>
+
+        <div className="mt-4 flex flex-wrap gap-2">
+          <Badge variant="secondary" className={cn("border", getBiasTone(data.bias))}>
+            {getBiasLabel(data.bias)}
+          </Badge>
+          <Badge variant="outline">Spot {formatMoney(data.underlyingPrice, 2)}</Badge>
+          {data.nearestExpiry && (
+            <Badge variant="outline">Naechster Expiry {formatExpiryLabel(data.nearestExpiry)}</Badge>
+          )}
+          <Badge variant="outline">Quelle {data.source}</Badge>
+        </div>
+      </Card>
+
+      <div className="grid gap-4 xl:grid-cols-2">
+        <Card className="p-4">
+          <div className="mb-3 flex items-center justify-between">
+            <h5 className="text-sm font-medium">Expiry Snapshot</h5>
+            <span className="text-xs text-muted-foreground">Front Expiries</span>
+          </div>
+          <div className="space-y-2">
+            {data.expiries.map((expiry) => (
+              <div key={expiry.expiration} className="rounded-lg border border-white/10 bg-black/10 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <div className="font-medium">{formatExpiryLabel(expiry.expiration)}</div>
+                    <div className="text-xs text-muted-foreground">{expiry.daysToExpiration} DTE</div>
+                  </div>
+                  <Badge variant="outline">P/C OI {formatNumber(expiry.putCallOiRatio, 2)}</Badge>
+                </div>
+                <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+                  <div>
+                    <div className="text-muted-foreground">Call OI</div>
+                    <div className="font-medium">{formatCompactNumber(expiry.totalCallOi, 1)}</div>
+                  </div>
+                  <div>
+                    <div className="text-muted-foreground">Put OI</div>
+                    <div className="font-medium">{formatCompactNumber(expiry.totalPutOi, 1)}</div>
+                  </div>
+                  <div>
+                    <div className="text-muted-foreground">Max Pain</div>
+                    <div className="font-medium">{expiry.maxPain !== null ? formatMoney(expiry.maxPain, 0) : "-"}</div>
+                  </div>
+                  <div>
+                    <div className="text-muted-foreground">ATM IV</div>
+                    <div className="font-medium">{expiry.atmIvPct !== null ? `${expiry.atmIvPct.toFixed(1)}%` : "-"}</div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+
+        <Card className="p-4">
+          <div className="mb-3 flex items-center justify-between">
+            <h5 className="text-sm font-medium">Key Strikes</h5>
+            <span className="text-xs text-muted-foreground">Nach Open Interest</span>
+          </div>
+          <div className="space-y-2">
+            {data.strikeLevels.map((level) => (
+              <div key={level.strike} className="rounded-lg border border-white/10 bg-black/10 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="font-medium">{formatMoney(level.strike, 0)}</div>
+                  <Badge variant="outline">{formatMetricPercent(level.distanceFromSpotPct, 1)}</Badge>
+                </div>
+                <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+                  <div>
+                    <div className="text-muted-foreground">Call OI</div>
+                    <div className="font-medium">{formatCompactNumber(level.callOi, 1)}</div>
+                  </div>
+                  <div>
+                    <div className="text-muted-foreground">Put OI</div>
+                    <div className="font-medium">{formatCompactNumber(level.putOi, 1)}</div>
+                  </div>
+                  <div>
+                    <div className="text-muted-foreground">Net OI</div>
+                    <div className={cn("font-medium", level.netOi >= 0 ? "text-green-300" : "text-red-300")}>
+                      {formatCompactNumber(level.netOi, 1)}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-muted-foreground">Net GEX</div>
+                    <div className={cn("font-medium", (level.netGexEstimate || 0) >= 0 ? "text-green-300" : "text-red-300")}>
+                      {formatCompactNumber(level.netGexEstimate, 1)}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      </div>
+
+      <Card className="p-4">
+        <div className="mb-3 flex items-center justify-between">
+          <h5 className="text-sm font-medium">Hot Contracts</h5>
+          <span className="text-xs text-muted-foreground">Volumen, OI und Naehe zum Spot</span>
+        </div>
+        {data.hotContracts.length === 0 ? (
+          <div className="text-sm text-muted-foreground">Keine auffaelligen Contracts im kostenlosen Feed.</div>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Typ</TableHead>
+                <TableHead>Strike</TableHead>
+                <TableHead>Expiry</TableHead>
+                <TableHead>Vol</TableHead>
+                <TableHead>OI</TableHead>
+                <TableHead>Vol/OI</TableHead>
+                <TableHead>IV</TableHead>
+                <TableHead>Premium</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {data.hotContracts.map((contract) => (
+                <TableRow key={contract.contractSymbol}>
+                  <TableCell>
+                    <Badge
+                      variant="secondary"
+                      className={cn(
+                        "border",
+                        contract.side === "call"
+                          ? "border-green-500/20 bg-green-500/10 text-green-300"
+                          : "border-red-500/20 bg-red-500/10 text-red-300"
+                      )}
+                    >
+                      {contract.side === "call" ? "CALL" : "PUT"}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>{formatMoney(contract.strike, 0)}</TableCell>
+                  <TableCell>{formatExpiryLabel(contract.expiration)}</TableCell>
+                  <TableCell>{formatCompactNumber(contract.volume, 1)}</TableCell>
+                  <TableCell>{formatCompactNumber(contract.openInterest, 1)}</TableCell>
+                  <TableCell>{formatNumber(contract.volumeOiRatio, 2)}</TableCell>
+                  <TableCell>{contract.impliedVolatilityPct !== null ? `${contract.impliedVolatilityPct.toFixed(1)}%` : "-"}</TableCell>
+                  <TableCell>{formatCompactCurrency(contract.premiumVolumeUsd, 1)}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </Card>
+
+      <div className="flex flex-wrap gap-2">
+        {data.sourceLinks.map((link) => (
+          <a
+            key={link.url}
+            href={link.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 rounded-md border border-zinc-700 bg-zinc-900/70 px-2 py-1 text-xs text-zinc-300 hover:bg-zinc-800"
+          >
+            {link.label}
+            <ExternalLink className="h-3 w-3" />
+          </a>
+        ))}
+      </div>
+
+      <p className="text-xs text-muted-foreground">{data.disclaimer}</p>
     </div>
   );
 }
@@ -229,12 +800,17 @@ export function StockDetailPanel({ stock }: StockDetailPanelProps) {
   return (
     <div className="p-4 bg-muted/30 border-t">
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2">
-          <h4 className="text-sm font-medium mb-3 flex items-center gap-2">
-            <BarChart3 className="h-4 w-4" />
-            Chart (100 Tage)
-          </h4>
-          <ChartSection key={stock.symbol} stock={stock} />
+        <div className="space-y-6 lg:col-span-2">
+          <div>
+            <h4 className="text-sm font-medium mb-3 flex items-center gap-2">
+              <BarChart3 className="h-4 w-4" />
+              Chart (100 Tage)
+            </h4>
+            <ChartSection key={stock.symbol} stock={stock} />
+          </div>
+
+          <OptionsSection symbol={stock.symbol} />
+          <SeasonalitySection symbol={stock.symbol} />
         </div>
 
         <div className="space-y-4">

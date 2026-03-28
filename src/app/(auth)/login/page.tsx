@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Loader2 } from "lucide-react";
@@ -20,9 +20,16 @@ import { toast } from "sonner";
 
 export default function LoginPage() {
   const router = useRouter();
-  const { login, isLoading } = useAuthStore();
+  const { login, isLoading, isAuthenticated } = useAuthStore();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      router.replace("/dashboard");
+      router.refresh();
+    }
+  }, [isAuthenticated, router]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -31,6 +38,7 @@ export default function LoginPage() {
       await login(username, password);
       toast.success("Erfolgreich angemeldet");
       router.replace("/dashboard");
+      router.refresh();
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "Login failed";
       toast.error(message);

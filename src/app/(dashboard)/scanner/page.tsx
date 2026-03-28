@@ -115,6 +115,7 @@ export default function ScannerPage() {
       case "3m": return filterByScanType(streamedStocks, "3m");
       case "6m": return filterByScanType(streamedStocks, "6m");
       case "setup": return filterByScanType(streamedStocks, "qullamaggie");
+      case "stockbee": return filterByScanType(streamedStocks, "stockbee");
       case "rs": return filterByScanType(streamedStocks, "rs");
       case "minervini": return filterByScanType(streamedStocks, "minervini");
       case "canslim": return filterByScanType(streamedStocks, "canslim");
@@ -134,6 +135,7 @@ export default function ScannerPage() {
   const momentum3mCount = streamedStocks.length > 0 ? filterByScanType(streamedStocks, "3m").length : 0;
   const momentum6mCount = streamedStocks.length > 0 ? filterByScanType(streamedStocks, "6m").length : 0;
   const setupCount = streamedStocks.length > 0 ? filterByScanType(streamedStocks, "qullamaggie").length : 0;
+  const stockbeeCount = streamedStocks.length > 0 ? filterByScanType(streamedStocks, "stockbee").length : 0;
   const rsCount = streamedStocks.length > 0 ? filterByScanType(streamedStocks, "rs").length : 0;
   const minerviniCount = streamedStocks.length > 0 ? filterByScanType(streamedStocks, "minervini").length : 0;
   const canslimCount = streamedStocks.length > 0 ? filterByScanType(streamedStocks, "canslim").length : 0;
@@ -189,6 +191,7 @@ export default function ScannerPage() {
           momentum3mCount={momentum3mCount}
           momentum6mCount={momentum6mCount}
           setupCount={setupCount}
+          stockbeeCount={stockbeeCount}
           rsCount={rsCount}
           minerviniCount={minerviniCount}
           canslimCount={canslimCount}
@@ -263,6 +266,7 @@ export default function ScannerPage() {
                 momentum3mCount={momentum3mCount}
                 momentum6mCount={momentum6mCount}
                 setupCount={setupCount}
+                stockbeeCount={stockbeeCount}
                 rsCount={rsCount}
                 minerviniCount={minerviniCount}
                 canslimCount={canslimCount}

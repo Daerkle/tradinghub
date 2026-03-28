@@ -1,6 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { scannerRateLimit } from "@/lib/rate-limiter";
-import { runFullScanWithCache, type StockData } from "@/lib/scanner-service";
+import { getCachedScannerResults, getCachedSeededScannerResults } from "@/lib/redis-cache";
+import {
+  fetchFinvizDataWithCache,
+  getStockSymbols,
+  runFullScanWithCache,
+  type ScanResult,
+  type StockData,
+} from "@/lib/scanner-service";
+import type { FinvizStockData } from "@/lib/finviz-service";
+import usStocksFull from "@/data/us-stocks-full.json";
 
 type IndexTrend = "bullish" | "bearish" | "mixed";
 
@@ -40,6 +49,28 @@ type MatrixRow = {
   catalystScore: number;
 };
 
+type LocalStockMeta = {
+  symbol: string;
+  companyName?: string;
+  sector?: string;
+  industry?: string;
+};
+
+const LOCAL_STOCK_META = new Map<
+  string,
+  { companyName?: string; sector?: string; industry?: string }
+>();
+
+for (const row of usStocksFull as LocalStockMeta[]) {
+  const symbol = (row.symbol || "").toUpperCase().trim();
+  if (!symbol) continue;
+  LOCAL_STOCK_META.set(symbol, {
+    companyName: row.companyName,
+    sector: row.sector,
+    industry: row.industry,
+  });
+}
+
 function finite(value: unknown, fallback: number = 0): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
@@ -54,6 +85,60 @@ function getIndexTrend(snapshot: Pick<IndexSnapshot, "aboveEma10" | "aboveEma20"
   if (snapshot.aboveEma20 && snapshot.aboveEma10 && snapshot.ema10AboveEma20) return "bullish";
   if (!snapshot.aboveEma20 && !snapshot.aboveEma10 && !snapshot.ema10AboveEma20) return "bearish";
   return "mixed";
+}
+
+function enrichMatrixStock(stock: StockData, finvizData: FinvizStockData | undefined): StockData {
+  const symbol = stock.symbol.toUpperCase();
+  const localMeta = LOCAL_STOCK_META.get(symbol);
+  const enriched: StockData = { ...stock };
+
+  if ((!enriched.name || enriched.name === enriched.symbol) && localMeta?.companyName) {
+    enriched.name = localMeta.companyName;
+  }
+  if ((!enriched.sector || enriched.sector === "Unknown") && localMeta?.sector) {
+    enriched.sector = localMeta.sector;
+  }
+  if ((!enriched.industry || enriched.industry === "Unknown") && localMeta?.industry) {
+    enriched.industry = localMeta.industry;
+  }
+
+  if (!finvizData) {
+    return enriched;
+  }
+
+  if ((!enriched.sector || enriched.sector === "Unknown") && finvizData.sector) {
+    enriched.sector = finvizData.sector;
+  }
+  if ((!enriched.industry || enriched.industry === "Unknown") && finvizData.industry) {
+    enriched.industry = finvizData.industry;
+  }
+
+  if (finite(enriched.momentum1M) === 0 && finite(finvizData.perfMonth) !== 0) {
+    enriched.momentum1M = finite(finvizData.perfMonth);
+  }
+  if (finite(enriched.momentum3M) === 0 && finite(finvizData.perfQuarter) !== 0) {
+    enriched.momentum3M = finite(finvizData.perfQuarter);
+  }
+  if (finite(enriched.momentum6M) === 0 && finite(finvizData.perfHalfY) !== 0) {
+    enriched.momentum6M = finite(finvizData.perfHalfY);
+  }
+  if (finite(enriched.momentum1Y) === 0 && finite(finvizData.perfYear) !== 0) {
+    enriched.momentum1Y = finite(finvizData.perfYear);
+  }
+
+  const hasFlat52WRange =
+    finite(enriched.distanceFrom52WkHigh) === 0 &&
+    finite(enriched.distanceFrom52WkLow) === 0;
+  if (hasFlat52WRange) {
+    if (typeof finvizData.distanceFrom52WkHigh === "number" && Number.isFinite(finvizData.distanceFrom52WkHigh)) {
+      enriched.distanceFrom52WkHigh = finvizData.distanceFrom52WkHigh;
+    }
+    if (typeof finvizData.distanceFrom52WkLow === "number" && Number.isFinite(finvizData.distanceFrom52WkLow)) {
+      enriched.distanceFrom52WkLow = finvizData.distanceFrom52WkLow;
+    }
+  }
+
+  return enriched;
 }
 
 function buildIndexSnapshot(stock: StockData | undefined, symbol: "SPY" | "QQQ"): IndexSnapshot {
@@ -215,19 +300,39 @@ export async function GET(request: NextRequest) {
   const maxRows = parsePositiveInt(searchParams.get("rows"), 36, 10, 120);
   const sectorCount = parsePositiveInt(searchParams.get("sectors"), 4, 2, 8);
 
-  const [scanResult, indexResult] = await Promise.all([
-    runFullScanWithCache({
-      useCache: !forceRefresh,
-      forceRefresh,
-      cacheKey: "full",
-    }),
-    runFullScanWithCache({
+  let scanResult: ScanResult & { fromCache: boolean };
+  if (!forceRefresh) {
+    const cachedFull = await getCachedScannerResults<ScanResult>();
+    if (cachedFull && cachedFull.stocks.length > 0) {
+      scanResult = { ...cachedFull, fromCache: true };
+    } else {
+      const cachedSeeded = await getCachedSeededScannerResults<ScanResult>();
+      if (cachedSeeded && cachedSeeded.stocks.length > 0) {
+        scanResult = { ...cachedSeeded, fromCache: true };
+      } else {
+        const seedSymbols = await getStockSymbols(false, 350);
+        scanResult = await runFullScanWithCache({
+          useCache: true,
+          forceRefresh: true,
+          symbols: seedSymbols,
+          cacheKey: "seeded",
+        });
+      }
+    }
+  } else {
+    scanResult = await runFullScanWithCache({
       useCache: false,
-      forceRefresh,
-      symbols: ["SPY", "QQQ"],
-      cacheKey: "seeded",
-    }),
-  ]);
+      forceRefresh: true,
+      cacheKey: "full",
+    });
+  }
+
+  const indexResult = await runFullScanWithCache({
+    useCache: false,
+    forceRefresh,
+    symbols: ["SPY", "QQQ"],
+    cacheKey: "seeded",
+  });
 
   const stockMap = new Map<string, StockData>();
   for (const stock of scanResult.stocks) {
@@ -249,9 +354,34 @@ export async function GET(request: NextRequest) {
 
   const hotSectors = buildSectorSummary(tradableStocks).slice(0, sectorCount);
   const hotSectorSet = new Set(hotSectors.map((sector) => sector.sector));
+  const hotSectorStocks = tradableStocks.filter((stock) => hotSectorSet.has((stock.sector || "").trim()));
 
-  const matrix: MatrixRow[] = tradableStocks
-    .filter((stock) => hotSectorSet.has((stock.sector || "").trim()))
+  const symbolsNeedingEnrichment = hotSectorStocks
+    .filter((stock) => {
+      const momentumMissing =
+        finite(stock.momentum1M) === 0 &&
+        finite(stock.momentum3M) === 0 &&
+        finite(stock.momentum6M) === 0;
+      const highLowMissing =
+        finite(stock.distanceFrom52WkHigh) === 0 &&
+        finite(stock.distanceFrom52WkLow) === 0;
+      const industryMissing = !stock.industry || stock.industry === "Unknown";
+      const nameMissing = !stock.name || stock.name === stock.symbol;
+      return momentumMissing || highLowMissing || industryMissing || nameMissing;
+    })
+    .map((stock) => stock.symbol.toUpperCase());
+
+  let finvizMatrixMap = new Map<string, FinvizStockData>();
+  if (symbolsNeedingEnrichment.length > 0) {
+    const uniqueSymbols = Array.from(new Set(symbolsNeedingEnrichment));
+    finvizMatrixMap = await fetchFinvizDataWithCache(uniqueSymbols.slice(0, Math.max(maxRows * 3, 80)));
+  }
+
+  const matrixSourceStocks = hotSectorStocks.map((stock) =>
+    enrichMatrixStock(stock, finvizMatrixMap.get(stock.symbol.toUpperCase()))
+  );
+
+  const matrix: MatrixRow[] = matrixSourceStocks
     .sort((a, b) => {
       const sectorScoreA = hotSectors.find((s) => s.sector === a.sector)?.score ?? 0;
       const sectorScoreB = hotSectors.find((s) => s.sector === b.sector)?.score ?? 0;
@@ -261,9 +391,9 @@ export async function GET(request: NextRequest) {
     .slice(0, maxRows)
     .map((stock) => ({
       symbol: stock.symbol,
-      name: stock.name,
-      sector: stock.sector,
-      industry: stock.industry,
+      name: stock.name || stock.symbol,
+      sector: stock.sector || "Unknown",
+      industry: stock.industry || "Unknown",
       price: finite(stock.price),
       changePercent: finite(stock.changePercent),
       momentum1M: finite(stock.momentum1M),

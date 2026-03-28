@@ -55,6 +55,10 @@ export interface StockData {
   // Qullamaggie Setup
   isQullaSetup: boolean;
   setupScore: number;
+  // Stockbee Setup
+  isStockbeeSetup?: boolean;
+  stockbeeScore?: number;
+  stockbee?: StockbeeSignals;
   // Catalyst Intelligence
   catalystScore: number;
   catalystSignals: string[];
@@ -88,6 +92,35 @@ export interface StockData {
   salesGrowthQoQ?: number;    // Sales Growth Q/Q
   earningsDate?: string;      // Next Earnings Date
   todayNewsCount?: number;    // Number of news headlines from today (when available)
+}
+
+export interface QullaMomentumAlignment {
+  month1: boolean;
+  month3: boolean;
+  month6: boolean;
+  month1Percentile: number;
+  month3Percentile: number;
+  month6Percentile: number;
+  thresholdPercentile: number;
+  alignedCount: number;
+  alignsWithQullamaggie: boolean;
+}
+
+export interface StockbeeSignals {
+  isEpisodicPivot: boolean;
+  isMomentumBurst: boolean;
+  isRangeExpansionBreakout: boolean;
+  isStockbeeSetup: boolean;
+  stockbeeScore: number;
+  hasMinLiquidity: boolean;
+  hasMinPrice: boolean;
+  trendTemplate: boolean;
+  nearHighs: boolean;
+  momentumLeader: boolean;
+  volumeExpansion: boolean;
+  closeNearHigh: boolean;
+  tightConsolidation: boolean;
+  qullaAlignment?: QullaMomentumAlignment;
 }
 
 export interface CandleData {

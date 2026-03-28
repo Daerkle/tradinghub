@@ -22,6 +22,7 @@ export interface FlexQueryTrade {
   currency: string;
   dateTime: string;
   quantity: number;
+  multiplier: number;
   tradePrice: number;
   proceeds: number;
   commission: number;
@@ -182,6 +183,16 @@ export function parseFlexQueryXML(xml: string): FlexQueryResult {
     if (assetCategory !== "STK" && assetCategory !== "OPT") continue;
 
     const quantityRaw = parseFloat(attr("quantity"));
+    const multiplierRaw =
+      parseFloat(attr("multiplier")) ||
+      parseFloat(attr("contractMultiplier")) ||
+      parseFloat(attr("mult"));
+    const multiplier =
+      Number.isFinite(multiplierRaw) && multiplierRaw > 0
+        ? multiplierRaw
+        : assetCategory === "OPT"
+          ? 100
+          : 1;
     const buySell = attr("buySell");
 
     trades.push({
@@ -191,6 +202,7 @@ export function parseFlexQueryXML(xml: string): FlexQueryResult {
       currency: attr("currency"),
       dateTime: attr("dateTime"),
       quantity: Math.abs(quantityRaw),
+      multiplier,
       tradePrice: parseFloat(attr("tradePrice")) || 0,
       proceeds: parseFloat(attr("proceeds")) || 0,
       commission: parseFloat(attr("ibCommission")) || parseFloat(attr("commission")) || 0,
