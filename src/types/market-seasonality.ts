@@ -1,9 +1,19 @@
+export interface SeasonalityCase {
+  label: string;
+  startDate: string;
+  endDate: string;
+  returnPct: number;
+}
+
 export interface SeasonalityStatBucket {
   label: string;
   avgReturnPct: number;
   medianReturnPct: number;
   positiveRatePct: number;
   sampleSize: number;
+  description?: string;
+  sampleUnit?: string;
+  cases?: SeasonalityCase[];
 }
 
 export interface CycleEventStat extends SeasonalityStatBucket {

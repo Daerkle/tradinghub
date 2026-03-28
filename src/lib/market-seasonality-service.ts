@@ -9,10 +9,11 @@ import type {
   MarketSeasonalityOverview,
   PresidentialCycleSummary,
   PresidentialCycleYear,
+  SeasonalityCase,
   SeasonalityStatBucket,
 } from "@/types/market-seasonality";
 
-const MARKET_SEASONALITY_CACHE_PREFIX = "seasonality:market:v1:";
+const MARKET_SEASONALITY_CACHE_PREFIX = "seasonality:market:v2:";
 const MARKET_SEASONALITY_TIMEOUT_MS = 30_000;
 const MARKET_SEASONALITY_LOOKBACK_DAYS = 365 * 80;
 const STOOQ_TIMEOUT_MS = 15_000;
@@ -39,6 +40,11 @@ type ReturnPoint = {
   index: number;
   date: Date;
   returnPct: number;
+};
+
+type StatAccumulator = {
+  values: number[];
+  cases: SeasonalityCase[];
 };
 
 const INDEX_PROXY_SYMBOLS: Record<string, string> = {
@@ -124,31 +130,100 @@ function quarterKey(date: Date): string {
   return `${date.getUTCFullYear()}-Q${Math.floor(date.getUTCMonth() / 3) + 1}`;
 }
 
-function bucketize(labels: string[], returnsByIndex: number[][]): SeasonalityStatBucket[] {
-  return labels.map((label, index) => {
-    const values = returnsByIndex[index] || [];
-    const positive = values.filter((value) => value > 0).length;
-    return {
-      label,
-      avgReturnPct: values.length > 0 ? values.reduce((sum, value) => sum + value, 0) / values.length : 0,
-      medianReturnPct: median(values),
-      positiveRatePct: values.length > 0 ? (positive / values.length) * 100 : 0,
-      sampleSize: values.length,
-    };
-  });
+function trimCases(cases: SeasonalityCase[], limit = 24): SeasonalityCase[] {
+  return cases.slice(-limit).reverse();
 }
 
-function buildCycleStat(slug: string, label: string, description: string, values: number[]): CycleEventStat {
+function createAccumulator(): StatAccumulator {
+  return {
+    values: [],
+    cases: [],
+  };
+}
+
+function buildStatBucket(
+  label: string,
+  values: number[],
+  options: {
+    description?: string;
+    sampleUnit?: string;
+    cases?: SeasonalityCase[];
+  } = {}
+): SeasonalityStatBucket {
   const positive = values.filter((value) => value > 0).length;
   return {
-    slug,
     label,
-    description,
     avgReturnPct: values.length > 0 ? values.reduce((sum, value) => sum + value, 0) / values.length : 0,
     medianReturnPct: median(values),
     positiveRatePct: values.length > 0 ? (positive / values.length) * 100 : 0,
     sampleSize: values.length,
+    description: options.description,
+    sampleUnit: options.sampleUnit,
+    cases: options.cases ? trimCases(options.cases) : undefined,
   };
+}
+
+function buildCycleStat(
+  slug: string,
+  label: string,
+  description: string,
+  accumulator: StatAccumulator,
+  sampleUnit = "Fenster"
+): CycleEventStat {
+  const bucket = buildStatBucket(label, accumulator.values, {
+    description,
+    sampleUnit,
+    cases: accumulator.cases,
+  });
+
+  return {
+    slug,
+    label: bucket.label,
+    description,
+    avgReturnPct: bucket.avgReturnPct,
+    medianReturnPct: bucket.medianReturnPct,
+    positiveRatePct: bucket.positiveRatePct,
+    sampleSize: bucket.sampleSize,
+    sampleUnit: bucket.sampleUnit,
+    cases: bucket.cases,
+  };
+}
+
+function buildCase(label: string, startDate: string, endDate: string, returnPct: number): SeasonalityCase {
+  return {
+    label,
+    startDate,
+    endDate,
+    returnPct,
+  };
+}
+
+function formatCaseMonth(date: Date): string {
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+function pushWindowCase(
+  accumulator: StatAccumulator,
+  indices: number[],
+  candles: DatedCandle[],
+  byIndex: Map<number, number>,
+  label: string
+): number | null {
+  const normalized = [...new Set(indices.filter((value) => Number.isInteger(value) && value > 0 && value < candles.length))].sort(
+    (a, b) => a - b
+  );
+  if (normalized.length === 0) return null;
+
+  const value = compoundIndices(normalized, byIndex);
+  if (value === null) return null;
+
+  const startDate = candles[normalized[0]]?.time;
+  const endDate = candles[normalized[normalized.length - 1]]?.time;
+  if (!startDate || !endDate) return null;
+
+  accumulator.values.push(value);
+  accumulator.cases.push(buildCase(label, startDate, endDate, value));
+  return value;
 }
 
 async function fetchHistoricalCandles(symbol: string, lookbackDays: number): Promise<CandleData[]> {
@@ -290,21 +365,52 @@ function buildDailyReturns(candles: DatedCandle[]): ReturnPoint[] {
   return returns;
 }
 
-function buildMonthlyAndWeekdayStats(returns: ReturnPoint[]) {
-  const monthlyReturns = Array.from({ length: 12 }, () => [] as number[]);
-  const weekdayReturns = Array.from({ length: 5 }, () => [] as number[]);
+function buildMonthlyAndWeekdayStats(candles: DatedCandle[], returns: ReturnPoint[]) {
+  const byIndex = returnByIndex(returns);
+  const monthGroups = buildGroupedIndices(candles, monthKey);
+  const monthlyAccumulators = Array.from({ length: 12 }, () => createAccumulator());
+  const weekdayAccumulators = Array.from({ length: 5 }, () => createAccumulator());
+
+  for (const group of monthGroups) {
+    if (group.length === 0) continue;
+    const firstCandle = candles[group[0]];
+    const monthAccumulator = monthlyAccumulators[firstCandle.date.getUTCMonth()];
+    pushWindowCase(
+      monthAccumulator,
+      group,
+      candles,
+      byIndex,
+      `${firstCandle.date.getUTCFullYear()} ${firstCandle.time.slice(5, 7)}`
+    );
+  }
 
   for (const point of returns) {
     const weekday = point.date.getUTCDay();
-    if (weekday >= 1 && weekday <= 5) {
-      weekdayReturns[weekday - 1].push(point.returnPct);
-    }
-    monthlyReturns[point.date.getUTCMonth()].push(point.returnPct);
+    if (weekday < 1 || weekday > 5) continue;
+    const accumulator = weekdayAccumulators[weekday - 1];
+    accumulator.values.push(point.returnPct);
+    const dateLabel = point.date.toISOString().slice(0, 10);
+    accumulator.cases.push(buildCase(dateLabel, dateLabel, dateLabel, point.returnPct));
   }
 
+  const monthLabels = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"];
+  const weekdayLabels = ["Mo", "Di", "Mi", "Do", "Fr"];
+
   return {
-    monthly: bucketize(["Jan", "Feb", "Mrz", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"], monthlyReturns),
-    weekday: bucketize(["Mo", "Di", "Mi", "Do", "Fr"], weekdayReturns),
+    monthly: monthLabels.map((label, index) =>
+      buildStatBucket(label, monthlyAccumulators[index].values, {
+        description: "Kompletter Monatsreturn über alle historischen Jahre.",
+        sampleUnit: "Jahre",
+        cases: monthlyAccumulators[index].cases,
+      })
+    ),
+    weekday: weekdayLabels.map((label, index) =>
+      buildStatBucket(label, weekdayAccumulators[index].values, {
+        description: "Tagesreturn aller historischen Handelstage dieses Wochentags.",
+        sampleUnit: "Handelstage",
+        cases: weekdayAccumulators[index].cases,
+      })
+    ),
   };
 }
 
@@ -337,57 +443,51 @@ function buildEventCycles(candles: DatedCandle[], returns: ReturnPoint[]): Cycle
   const quarterGroups = buildGroupedIndices(candles, quarterKey);
   const indexByDate = new Map(candles.map((candle, index) => [candle.time, index]));
 
-  const monthStart: number[] = [];
-  const monthEnd: number[] = [];
-  const turnOfMonth: number[] = [];
-  const turnOfQuarter: number[] = [];
-  const restOfMonthReturns: number[] = [];
-  const firstTradingDayMonth: number[] = [];
-  const lastTradingDayMonth: number[] = [];
-  const firstWeekMonth: number[] = [];
-  const lastWeekMonth: number[] = [];
-  const firstHalfMonth: number[] = [];
-  const secondHalfMonth: number[] = [];
-  const quarterEndWeek: number[] = [];
-  const quarterStartWeek: number[] = [];
-  const fomcWindow: number[] = [];
-  const fomcPreDay: number[] = [];
-  const fomcNextDay: number[] = [];
-  const fomcPlusTwo: number[] = [];
+  const monthStart = createAccumulator();
+  const monthEnd = createAccumulator();
+  const turnOfMonth = createAccumulator();
+  const turnOfQuarter = createAccumulator();
+  const restOfMonthReturns = createAccumulator();
+  const firstTradingDayMonth = createAccumulator();
+  const lastTradingDayMonth = createAccumulator();
+  const firstWeekMonth = createAccumulator();
+  const lastWeekMonth = createAccumulator();
+  const firstHalfMonth = createAccumulator();
+  const secondHalfMonth = createAccumulator();
+  const quarterEndWeek = createAccumulator();
+  const quarterStartWeek = createAccumulator();
+  const fomcWindow = createAccumulator();
+  const fomcPreDay = createAccumulator();
+  const fomcNextDay = createAccumulator();
+  const fomcPlusTwo = createAccumulator();
 
   for (let index = 0; index < monthGroups.length; index++) {
     const group = monthGroups[index];
     const prev = monthGroups[index - 1];
+    const firstDate = candles[group[0]]?.date;
+    if (!firstDate) continue;
+    const periodLabel = formatCaseMonth(firstDate);
     const firstThree = group.slice(0, 3);
     const lastThree = group.slice(-3);
     const turnWindow = [...(prev ? prev.slice(-1) : []), ...firstThree];
-
-    const startReturn = compoundIndices(firstThree, byIndex);
-    const endReturn = compoundIndices(lastThree, byIndex);
-    const turnReturn = compoundIndices(turnWindow, byIndex);
-    const firstDayReturn = compoundIndices(group.slice(0, 1), byIndex);
-    const lastDayReturn = compoundIndices(group.slice(-1), byIndex);
-    const firstWeekReturn = compoundIndices(group.slice(0, 5), byIndex);
-    const lastWeekReturn = compoundIndices(group.slice(-5), byIndex);
     const midpoint = Math.ceil(group.length / 2);
-    const firstHalfReturn = compoundIndices(group.slice(0, midpoint), byIndex);
-    const secondHalfReturn = compoundIndices(group.slice(midpoint), byIndex);
-
-    if (startReturn !== null) monthStart.push(startReturn);
-    if (endReturn !== null) monthEnd.push(endReturn);
-    if (turnReturn !== null) turnOfMonth.push(turnReturn);
-    if (firstDayReturn !== null) firstTradingDayMonth.push(firstDayReturn);
-    if (lastDayReturn !== null) lastTradingDayMonth.push(lastDayReturn);
-    if (firstWeekReturn !== null) firstWeekMonth.push(firstWeekReturn);
-    if (lastWeekReturn !== null) lastWeekMonth.push(lastWeekReturn);
-    if (firstHalfReturn !== null) firstHalfMonth.push(firstHalfReturn);
-    if (secondHalfReturn !== null) secondHalfMonth.push(secondHalfReturn);
+    pushWindowCase(monthStart, firstThree, candles, byIndex, `${periodLabel} Monatsstart`);
+    pushWindowCase(monthEnd, lastThree, candles, byIndex, `${periodLabel} Monatsende`);
+    pushWindowCase(turnOfMonth, turnWindow, candles, byIndex, `${periodLabel} Turn of Month`);
+    pushWindowCase(firstTradingDayMonth, group.slice(0, 1), candles, byIndex, `${periodLabel} erster Handelstag`);
+    pushWindowCase(lastTradingDayMonth, group.slice(-1), candles, byIndex, `${periodLabel} letzter Handelstag`);
+    pushWindowCase(firstWeekMonth, group.slice(0, 5), candles, byIndex, `${periodLabel} erste Woche`);
+    pushWindowCase(lastWeekMonth, group.slice(-5), candles, byIndex, `${periodLabel} letzte Woche`);
+    pushWindowCase(firstHalfMonth, group.slice(0, midpoint), candles, byIndex, `${periodLabel} erste Monatshälfte`);
+    pushWindowCase(secondHalfMonth, group.slice(midpoint), candles, byIndex, `${periodLabel} zweite Monatshälfte`);
 
     const excluded = new Set([...firstThree, ...(prev ? prev.slice(-1) : [])]);
     for (const point of returns) {
-      if (monthKey(point.date) !== monthKey(candles[group[0]].date)) continue;
+      if (monthKey(point.date) !== monthKey(firstDate)) continue;
       if (!excluded.has(point.index)) {
-        restOfMonthReturns.push(point.returnPct);
+        restOfMonthReturns.values.push(point.returnPct);
+        const dateLabel = point.date.toISOString().slice(0, 10);
+        restOfMonthReturns.cases.push(buildCase(dateLabel, dateLabel, dateLabel, point.returnPct));
       }
     }
   }
@@ -396,37 +496,33 @@ function buildEventCycles(candles: DatedCandle[], returns: ReturnPoint[]): Cycle
     const group = quarterGroups[index];
     const prev = quarterGroups[index - 1];
     const window = [...prev.slice(-3), ...group.slice(0, 3)];
-    const quarterReturn = compoundIndices(window, byIndex);
-    if (quarterReturn !== null) turnOfQuarter.push(quarterReturn);
-
-    const prevQuarterEndWeek = compoundIndices(prev.slice(-5), byIndex);
-    if (prevQuarterEndWeek !== null) quarterEndWeek.push(prevQuarterEndWeek);
-
-    const currentQuarterStartWeek = compoundIndices(group.slice(0, 5), byIndex);
-    if (currentQuarterStartWeek !== null) quarterStartWeek.push(currentQuarterStartWeek);
+    const quarterDate = candles[group[0]]?.date;
+    if (!quarterDate) continue;
+    const quarterLabel = quarterKey(quarterDate);
+    pushWindowCase(turnOfQuarter, window, candles, byIndex, `${quarterLabel} Turn of Quarter`);
+    pushWindowCase(quarterEndWeek, prev.slice(-5), candles, byIndex, `${quarterLabel} Quarter-End Woche`);
+    pushWindowCase(quarterStartWeek, group.slice(0, 5), candles, byIndex, `${quarterLabel} Quarter-Start-Woche`);
   }
 
-  const santaRally: number[] = [];
-  const halloween: number[] = [];
-  const summer: number[] = [];
-  const januaryMonth: number[] = [];
-  const firstFiveJanuary: number[] = [];
-  const optionsExpirationWeek: number[] = [];
-  const optionsExpirationFriday: number[] = [];
-  const optionsExpirationNextWeek: number[] = [];
-  const earningsSeasonWindow: number[] = [];
-  const tripleWitchingWeek: number[] = [];
+  const santaRally = createAccumulator();
+  const halloween = createAccumulator();
+  const summer = createAccumulator();
+  const januaryMonth = createAccumulator();
+  const firstFiveJanuary = createAccumulator();
+  const optionsExpirationWeek = createAccumulator();
+  const optionsExpirationFriday = createAccumulator();
+  const optionsExpirationNextWeek = createAccumulator();
+  const earningsSeasonWindow = createAccumulator();
+  const tripleWitchingWeek = createAccumulator();
 
   for (const group of monthGroups) {
     if (group.length === 0) continue;
     const firstDate = candles[group[0]]?.date;
     if (!firstDate) continue;
-
-    const monthlyReturn = compoundIndices(group, byIndex);
+    const periodLabel = formatCaseMonth(firstDate);
     if (firstDate.getUTCMonth() === 0) {
-      if (monthlyReturn !== null) januaryMonth.push(monthlyReturn);
-      const januaryFirstFive = compoundIndices(group.slice(0, 5), byIndex);
-      if (januaryFirstFive !== null) firstFiveJanuary.push(januaryFirstFive);
+      pushWindowCase(januaryMonth, group, candles, byIndex, `${firstDate.getUTCFullYear()} Januar`);
+      pushWindowCase(firstFiveJanuary, group.slice(0, 5), candles, byIndex, `${firstDate.getUTCFullYear()} erste 5 Tage Januar`);
     }
 
     const opExIndex = group.findIndex((index) => {
@@ -438,24 +534,28 @@ function buildEventCycles(candles: DatedCandle[], returns: ReturnPoint[]): Cycle
     });
     if (opExIndex >= 0) {
       const opExWindow = group.slice(Math.max(0, opExIndex - 4), Math.min(group.length, opExIndex + 1));
-      const opExReturn = compoundIndices(opExWindow, byIndex);
-      if (opExReturn !== null) optionsExpirationWeek.push(opExReturn);
-
-      const opExFriday = compoundIndices(group.slice(opExIndex, opExIndex + 1), byIndex);
-      if (opExFriday !== null) optionsExpirationFriday.push(opExFriday);
-
-      const opExNextWeek = compoundIndices(group.slice(opExIndex + 1, opExIndex + 6), byIndex);
-      if (opExNextWeek !== null) optionsExpirationNextWeek.push(opExNextWeek);
+      const opExLabel = `${periodLabel} OpEx`;
+      const opExReturn = pushWindowCase(optionsExpirationWeek, opExWindow, candles, byIndex, `${opExLabel} Woche`);
+      pushWindowCase(optionsExpirationFriday, group.slice(opExIndex, opExIndex + 1), candles, byIndex, `${opExLabel} Freitag`);
+      pushWindowCase(optionsExpirationNextWeek, group.slice(opExIndex + 1, opExIndex + 6), candles, byIndex, `${opExLabel} Folgewoche`);
 
       const month = firstDate.getUTCMonth();
       if ([2, 5, 8, 11].includes(month)) {
-        if (opExReturn !== null) tripleWitchingWeek.push(opExReturn);
+        if (opExReturn !== null) {
+          tripleWitchingWeek.values.push(opExReturn);
+          const lastCase = optionsExpirationWeek.cases[optionsExpirationWeek.cases.length - 1];
+          if (lastCase) {
+            tripleWitchingWeek.cases.push({
+              ...lastCase,
+              label: `${periodLabel} Triple Witching`,
+            });
+          }
+        }
       }
     }
 
     if ([0, 3, 6, 9].includes(firstDate.getUTCMonth())) {
-      const earningsWindow = compoundIndices(group.slice(0, 10), byIndex);
-      if (earningsWindow !== null) earningsSeasonWindow.push(earningsWindow);
+      pushWindowCase(earningsSeasonWindow, group.slice(0, 10), candles, byIndex, `${periodLabel} Earnings Season`);
     }
   }
 
@@ -471,8 +571,7 @@ function buildEventCycles(candles: DatedCandle[], returns: ReturnPoint[]): Cycle
       .map(({ index }) => index);
 
     const santaWindow = [...dec.slice(-5), ...jan.slice(0, 2)];
-    const santaReturn = compoundIndices(santaWindow, byIndex);
-    if (santaReturn !== null) santaRally.push(santaReturn);
+    pushWindowCase(santaRally, santaWindow, candles, byIndex, `${year}/${year + 1} Santa Rally`);
 
     const winterWindow = candles
       .map((candle, index) => ({ candle, index }))
@@ -491,10 +590,8 @@ function buildEventCycles(candles: DatedCandle[], returns: ReturnPoint[]): Cycle
       })
       .map(({ index }) => index);
 
-    const winterReturn = compoundIndices(winterWindow, byIndex);
-    const summerReturn = compoundIndices(summerWindow, byIndex);
-    if (winterReturn !== null) halloween.push(winterReturn);
-    if (summerReturn !== null) summer.push(summerReturn);
+    pushWindowCase(halloween, winterWindow, candles, byIndex, `${year}/${year + 1} Nov-Apr`);
+    pushWindowCase(summer, summerWindow, candles, byIndex, `${year} Mai-Okt`);
   }
 
   for (const meetingDate of FOMC_MEETING_END_DATES) {
@@ -506,15 +603,10 @@ function buildEventCycles(candles: DatedCandle[], returns: ReturnPoint[]): Cycle
     const nextDayWindow = [idx, idx + 1].filter((value) => value > 0 && value < candles.length);
     const plusTwoWindow = [idx, idx + 1, idx + 2].filter((value) => value > 0 && value < candles.length);
 
-    const fomcReturn = compoundIndices(window, byIndex);
-    const fomcPre = compoundIndices(preDayWindow, byIndex);
-    const fomcDayPlusOne = compoundIndices(nextDayWindow, byIndex);
-    const fomcAfter = compoundIndices(plusTwoWindow, byIndex);
-
-    if (fomcReturn !== null) fomcWindow.push(fomcReturn);
-    if (fomcPre !== null) fomcPreDay.push(fomcPre);
-    if (fomcDayPlusOne !== null) fomcNextDay.push(fomcDayPlusOne);
-    if (fomcAfter !== null) fomcPlusTwo.push(fomcAfter);
+    pushWindowCase(fomcWindow, window, candles, byIndex, `${meetingDate} FOMC-Fenster`);
+    pushWindowCase(fomcPreDay, preDayWindow, candles, byIndex, `${meetingDate} FOMC -1`);
+    pushWindowCase(fomcNextDay, nextDayWindow, candles, byIndex, `${meetingDate} FOMC +1`);
+    pushWindowCase(fomcPlusTwo, plusTwoWindow, candles, byIndex, `${meetingDate} FOMC +2`);
   }
 
   return [
@@ -539,12 +631,12 @@ function buildEventCycles(candles: DatedCandle[], returns: ReturnPoint[]): Cycle
     buildCycleStat("opex-week", "OpEx-Woche", "Handelswoche bis zum monatlichen Verfall am dritten Freitag.", optionsExpirationWeek),
     buildCycleStat("opex-friday", "OpEx-Freitag", "Nur der dritte Freitag des Monats als monatlicher Verfallstag.", optionsExpirationFriday),
     buildCycleStat("opex-next-week", "OpEx-Folgewoche", "Die fünf Handelstage direkt nach dem monatlichen Verfall.", optionsExpirationNextWeek),
-    buildCycleStat("triple-witching", "Triple Witching", "Quartalsweiser Verfall in Mrz/Jun/Sep/Dez rund um den dritten Freitag.", tripleWitchingWeek),
+    buildCycleStat("triple-witching", "Triple Witching", "Quartalsweiser Verfall in Mär/Jun/Sep/Dez rund um den dritten Freitag.", tripleWitchingWeek),
     buildCycleStat("earnings-season", "Earnings Season", "Erste zehn Handelstage in Jan/Apr/Jul/Okt als Earnings-Fenster.", earningsSeasonWindow),
     buildCycleStat("santa-rally", "Santa Rally", "Letzte fünf Handelstage im Dezember plus erste zwei im Januar.", santaRally),
     buildCycleStat("nov-apr", "Nov bis Apr", "Halbjahresfenster des Halloween-Effekts.", halloween),
     buildCycleStat("may-oct", "Mai bis Okt", "Sommerhalbjahr als Gegenpol zum Halloween-Effekt.", summer),
-    buildCycleStat("rest-of-month", "Rest des Monats", "Normale Tagesrenditen außerhalb des Turn-of-Month-Fensters.", restOfMonthReturns),
+    buildCycleStat("rest-of-month", "Rest des Monats", "Normale Tagesrenditen außerhalb des Turn-of-Month-Fensters.", restOfMonthReturns, "Handelstage"),
   ];
 }
 
@@ -653,7 +745,7 @@ export async function fetchMarketSeasonalityOverview(
   const bundledSymbol = INDEX_PROXY_SYMBOLS[normalizedSymbol] ?? normalizedSymbol;
   const cacheKey = `${MARKET_SEASONALITY_CACHE_PREFIX}${normalizedSymbol}`;
   const cached = await smartCacheGet<MarketSeasonalityOverview>(cacheKey);
-  const persistedSnapshotPromise = readPersistentSnapshot<MarketSeasonalityOverview>("market-seasonality", normalizedSymbol, {
+  const persistedSnapshotPromise = readPersistentSnapshot<MarketSeasonalityOverview>("market-seasonality-v2", normalizedSymbol, {
     maxAgeMs: MARKET_SEASONALITY_SNAPSHOT_MAX_AGE_MS,
   });
 
@@ -673,7 +765,7 @@ export async function fetchMarketSeasonalityOverview(
     }
 
     const returns = buildDailyReturns(candles);
-    const { monthly, weekday } = buildMonthlyAndWeekdayStats(returns);
+    const { monthly, weekday } = buildMonthlyAndWeekdayStats(candles, returns);
     const eventCycles = buildEventCycles(candles, returns);
     const presidentialCycle = buildPresidentialCycle(candles);
 
@@ -707,7 +799,7 @@ export async function fetchMarketSeasonalityOverview(
       freshTtlSeconds: MARKET_SEASONALITY_FRESH_TTL_SECONDS,
       staleTtlSeconds: MARKET_SEASONALITY_STALE_TTL_SECONDS,
     });
-    await writePersistentSnapshot("market-seasonality", normalizedSymbol, overview);
+    await writePersistentSnapshot("market-seasonality-v2", normalizedSymbol, overview);
     return overview;
   } catch (error) {
     if (cached.data) {
