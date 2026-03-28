@@ -24,6 +24,18 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  ComposedChart,
+  Line,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import type {
   MarketSeasonalityOverview,
   SeasonalityCase,
@@ -171,6 +183,24 @@ function formatCount(count: number, unit: string): string {
 function formatPeriod(startDate: string, endDate: string): string {
   if (startDate === endDate) return startDate;
   return `${startDate} bis ${endDate}`;
+}
+
+function average(values: number[]): number | null {
+  if (values.length === 0) return null;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function standardDeviation(values: number[]): number | null {
+  if (values.length < 2) return null;
+  const mean = average(values);
+  if (mean === null) return null;
+  const variance = values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / values.length;
+  return Math.sqrt(variance);
+}
+
+function shortenLabel(label: string, maxLength = 18): string {
+  if (label.length <= maxLength) return label;
+  return `${label.slice(0, maxLength - 1)}…`;
 }
 
 function buildInsightFromBucket(
@@ -421,6 +451,48 @@ export default function SeasonalityPage() {
       if (!query) return true;
       return `${entry.label} ${entry.startDate} ${entry.endDate}`.toLowerCase().includes(query);
     }) ?? [];
+  const monthChartData =
+    data?.monthly.map((bucket) => ({
+      label: bucket.label,
+      avgReturnPct: Number(bucket.avgReturnPct.toFixed(2)),
+      medianReturnPct: Number(bucket.medianReturnPct.toFixed(2)),
+      positiveRatePct: Number(bucket.positiveRatePct.toFixed(0)),
+    })) ?? [];
+  const eventRankingData =
+    data?.eventCycles
+      .map((cycle) => ({
+        label: cycle.label,
+        shortLabel: shortenLabel(cycle.label, 16),
+        avgReturnPct: Number(cycle.avgReturnPct.toFixed(2)),
+        positiveRatePct: Number(cycle.positiveRatePct.toFixed(0)),
+      }))
+      .sort((a, b) => b.avgReturnPct - a.avgReturnPct) ?? [];
+  const comparisonChartData = comparison
+    .slice()
+    .sort((a, b) => (b.strongestEventReturn ?? -Infinity) - (a.strongestEventReturn ?? -Infinity))
+    .map((row) => ({
+      label: row.label,
+      symbol: row.symbol,
+      strongestEventReturn: Number((row.strongestEventReturn ?? 0).toFixed(2)),
+    }));
+  const selectedCaseValues = selectedInsight?.cases.map((entry) => entry.returnPct) ?? [];
+  const selectedCaseStats = {
+    bestCase: selectedInsight?.cases.slice().sort((a, b) => b.returnPct - a.returnPct)[0] ?? null,
+    worstCase: selectedInsight?.cases.slice().sort((a, b) => a.returnPct - b.returnPct)[0] ?? null,
+    dispersionPct: standardDeviation(selectedCaseValues),
+    recentAveragePct: average(selectedCaseValues.slice(-5)),
+  };
+  const selectedCaseChartData =
+    selectedInsight?.cases
+      .slice()
+      .reverse()
+      .map((entry) => ({
+        label: shortenLabel(entry.label, 14),
+        fullLabel: entry.label,
+        returnPct: Number(entry.returnPct.toFixed(2)),
+      })) ?? [];
+  const topPositiveCases = selectedInsight?.cases.slice().sort((a, b) => b.returnPct - a.returnPct).slice(0, 5) ?? [];
+  const topNegativeCases = selectedInsight?.cases.slice().sort((a, b) => a.returnPct - b.returnPct).slice(0, 5) ?? [];
 
   useEffect(() => {
     if (!data) {
@@ -759,6 +831,271 @@ export default function SeasonalityPage() {
             </CardContent>
           </Card>
 
+          <div className="grid gap-6 xl:grid-cols-2">
+            <Card>
+              <CardHeader>
+                <CardTitle>Monatsprofil</CardTitle>
+                <CardDescription>
+                  Monatsreturns als Balken, Median als Linie und Positivquote als Kontext. So siehst du sofort, welche Monate
+                  nicht nur stark, sondern auch stabil sind.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="h-[360px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <ComposedChart data={monthChartData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="oklch(1 0 0 / 0.08)" vertical={false} />
+                    <XAxis dataKey="label" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
+                    <YAxis
+                      yAxisId="left"
+                      tick={{ fontSize: 11 }}
+                      tickFormatter={(value) => `${value}%`}
+                      axisLine={false}
+                      tickLine={false}
+                    />
+                    <YAxis
+                      yAxisId="right"
+                      orientation="right"
+                      domain={[0, 100]}
+                      tick={{ fontSize: 11 }}
+                      tickFormatter={(value) => `${value}%`}
+                      axisLine={false}
+                      tickLine={false}
+                    />
+                    <Tooltip
+                      formatter={(value: number, name: string) => [
+                        `${value.toFixed(name === "positiveRatePct" ? 0 : 2)}%`,
+                        name === "avgReturnPct"
+                          ? "Durchschnitt"
+                          : name === "medianReturnPct"
+                            ? "Median"
+                            : "Positivquote",
+                      ]}
+                    />
+                    <Bar yAxisId="left" dataKey="avgReturnPct" radius={[6, 6, 0, 0]}>
+                      {monthChartData.map((entry) => (
+                        <Cell
+                          key={entry.label}
+                          fill={entry.avgReturnPct >= 0 ? "oklch(0.63 0.18 160)" : "oklch(0.63 0.23 20)"}
+                        />
+                      ))}
+                    </Bar>
+                    <Line
+                      yAxisId="left"
+                      type="monotone"
+                      dataKey="medianReturnPct"
+                      stroke="oklch(0.78 0.15 80)"
+                      strokeWidth={2}
+                      dot={false}
+                    />
+                    <Line
+                      yAxisId="right"
+                      type="monotone"
+                      dataKey="positiveRatePct"
+                      stroke="oklch(0.75 0.04 250)"
+                      strokeWidth={2}
+                      dot={false}
+                    />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Event-Ranking</CardTitle>
+                <CardDescription>
+                  Alle Event-Zyklen nach Durchschnitt sortiert. Damit erkennst du sofort, welche Kalenderfenster historisch den
+                  größten Rückenwind oder Gegenwind hatten.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="h-[360px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={eventRankingData} layout="vertical" margin={{ top: 8, right: 12, left: 8, bottom: 8 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="oklch(1 0 0 / 0.08)" horizontal={false} />
+                    <XAxis
+                      type="number"
+                      tick={{ fontSize: 11 }}
+                      tickFormatter={(value) => `${value}%`}
+                      axisLine={false}
+                      tickLine={false}
+                    />
+                    <YAxis
+                      type="category"
+                      dataKey="shortLabel"
+                      width={120}
+                      tick={{ fontSize: 11 }}
+                      axisLine={false}
+                      tickLine={false}
+                    />
+                    <Tooltip
+                      formatter={(value: number) => [`${value.toFixed(2)}%`, "Durchschnitt"]}
+                      labelFormatter={(label) => {
+                        const match = eventRankingData.find((entry) => entry.shortLabel === label);
+                        return match?.label ?? String(label);
+                      }}
+                    />
+                    <Bar dataKey="avgReturnPct" radius={[0, 6, 6, 0]}>
+                      {eventRankingData.map((entry) => (
+                        <Cell
+                          key={entry.label}
+                          fill={entry.avgReturnPct >= 0 ? "oklch(0.63 0.18 160)" : "oklch(0.63 0.23 20)"}
+                        />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
+          </div>
+
+          {selectedInsight ? (
+            <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Fallverlauf: {selectedInsight.label}</CardTitle>
+                  <CardDescription>
+                    Zeitlicher Verlauf der historischen Fälle des aktuell ausgewählten Musters. Hier siehst du sofort, ob die
+                    letzten Jahre ähnlich oder komplett uneinheitlich waren.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="h-[360px]">
+                  {selectedCaseChartData.length > 0 ? (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={selectedCaseChartData}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="oklch(1 0 0 / 0.08)" vertical={false} />
+                        <XAxis dataKey="label" tick={{ fontSize: 10 }} axisLine={false} tickLine={false} interval="preserveStartEnd" />
+                        <YAxis
+                          tick={{ fontSize: 11 }}
+                          tickFormatter={(value) => `${value}%`}
+                          axisLine={false}
+                          tickLine={false}
+                        />
+                        <Tooltip
+                          formatter={(value: number) => [`${value.toFixed(2)}%`, "Return"]}
+                          labelFormatter={(label) => {
+                            const match = selectedCaseChartData.find((entry) => entry.label === label);
+                            return match?.fullLabel ?? String(label);
+                          }}
+                        />
+                        <Bar dataKey="returnPct" radius={[6, 6, 0, 0]}>
+                          {selectedCaseChartData.map((entry) => (
+                            <Cell
+                              key={`${entry.fullLabel}-${entry.label}`}
+                              fill={entry.returnPct >= 0 ? "oklch(0.63 0.18 160)" : "oklch(0.63 0.23 20)"}
+                            />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                      Für dieses Muster liegen keine Fallreihen vor.
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Statistik-Board</CardTitle>
+                  <CardDescription>
+                    Verdichtete Auswertung des ausgewählten Musters mit Stabilität und Extremfällen.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-xl border p-4">
+                    <div className="text-sm text-muted-foreground">Bester Fall</div>
+                    <div className={`mt-2 text-xl font-semibold ${toneClass(selectedCaseStats.bestCase?.returnPct)}`}>
+                      {formatPct(selectedCaseStats.bestCase?.returnPct, 2)}
+                    </div>
+                    <div className="mt-1 text-sm text-muted-foreground">{selectedCaseStats.bestCase?.label ?? "-"}</div>
+                  </div>
+                  <div className="rounded-xl border p-4">
+                    <div className="text-sm text-muted-foreground">Schlechtester Fall</div>
+                    <div className={`mt-2 text-xl font-semibold ${toneClass(selectedCaseStats.worstCase?.returnPct)}`}>
+                      {formatPct(selectedCaseStats.worstCase?.returnPct, 2)}
+                    </div>
+                    <div className="mt-1 text-sm text-muted-foreground">{selectedCaseStats.worstCase?.label ?? "-"}</div>
+                  </div>
+                  <div className="rounded-xl border p-4">
+                    <div className="text-sm text-muted-foreground">Streuung</div>
+                    <div className="mt-2 text-xl font-semibold">{formatPct(selectedCaseStats.dispersionPct, 2)}</div>
+                    <div className="mt-1 text-sm text-muted-foreground">
+                      Hohe Streuung heißt: das Muster war historisch deutlich ungleichmäßiger.
+                    </div>
+                  </div>
+                  <div className="rounded-xl border p-4">
+                    <div className="text-sm text-muted-foreground">Ø letzte 5 Fälle</div>
+                    <div className={`mt-2 text-xl font-semibold ${toneClass(selectedCaseStats.recentAveragePct)}`}>
+                      {formatPct(selectedCaseStats.recentAveragePct, 2)}
+                    </div>
+                    <div className="mt-1 text-sm text-muted-foreground">
+                      Schnellcheck, ob das Muster in der jüngeren Vergangenheit noch funktioniert hat.
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          ) : null}
+
+          {selectedInsight ? (
+            <div className="grid gap-6 xl:grid-cols-2">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Top-Fälle</CardTitle>
+                  <CardDescription>Die stärksten historischen Treffer für das ausgewählte Muster.</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Fall</TableHead>
+                        <TableHead>Zeitraum</TableHead>
+                        <TableHead>Return</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {topPositiveCases.map((entry) => (
+                        <TableRow key={`${entry.label}-${entry.startDate}-top`}>
+                          <TableCell className="font-medium">{entry.label}</TableCell>
+                          <TableCell>{formatPeriod(entry.startDate, entry.endDate)}</TableCell>
+                          <TableCell className={toneClass(entry.returnPct)}>{formatPct(entry.returnPct, 2)}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Flop-Fälle</CardTitle>
+                  <CardDescription>Die schwächsten historischen Ausprägungen desselben Musters.</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Fall</TableHead>
+                        <TableHead>Zeitraum</TableHead>
+                        <TableHead>Return</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {topNegativeCases.map((entry) => (
+                        <TableRow key={`${entry.label}-${entry.startDate}-flop`}>
+                          <TableCell className="font-medium">{entry.label}</TableCell>
+                          <TableCell>{formatPeriod(entry.startDate, entry.endDate)}</TableCell>
+                          <TableCell className={toneClass(entry.returnPct)}>{formatPct(entry.returnPct, 2)}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+            </div>
+          ) : null}
+
           <SeasonalityHeatmap
             title="Monats-Heatmap"
             description="Echte Monatsfenster pro Jahr. Klick auf einen Monat zeigt dir die historischen Einzelfälle und Kennzahlen."
@@ -852,6 +1189,53 @@ export default function SeasonalityPage() {
                   </TableBody>
                 </Table>
               )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Marktvergleich als Diagramm</CardTitle>
+              <CardDescription>
+                Ranking der Presets nach ihrem stärksten Event-Zyklus. Ein schneller Überblick, welcher Markt historisch den
+                besten saisonalen Rückenwind hatte.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="h-[360px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={comparisonChartData} layout="vertical" margin={{ top: 8, right: 12, left: 8, bottom: 8 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="oklch(1 0 0 / 0.08)" horizontal={false} />
+                  <XAxis
+                    type="number"
+                    tick={{ fontSize: 11 }}
+                    tickFormatter={(value) => `${value}%`}
+                    axisLine={false}
+                    tickLine={false}
+                  />
+                  <YAxis
+                    type="category"
+                    dataKey="label"
+                    width={90}
+                    tick={{ fontSize: 11 }}
+                    axisLine={false}
+                    tickLine={false}
+                  />
+                  <Tooltip
+                    formatter={(value: number) => [`${value.toFixed(2)}%`, "Stärkster Event-Zyklus"]}
+                    labelFormatter={(label) => {
+                      const match = comparisonChartData.find((entry) => entry.label === label);
+                      return match ? `${match.label} (${match.symbol})` : String(label);
+                    }}
+                  />
+                  <Bar dataKey="strongestEventReturn" radius={[0, 6, 6, 0]}>
+                    {comparisonChartData.map((entry) => (
+                      <Cell
+                        key={`${entry.symbol}-${entry.label}`}
+                        fill={entry.strongestEventReturn >= 0 ? "oklch(0.63 0.18 160)" : "oklch(0.63 0.23 20)"}
+                      />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
             </CardContent>
           </Card>
 
