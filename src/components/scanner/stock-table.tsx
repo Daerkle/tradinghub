@@ -251,7 +251,7 @@ export function StockTable({
   sortField, sortDirection, onSort,
 }: StockTableProps) {
   return (
-    <ScrollArea className="h-[calc(100vh-320px)]">
+    <ScrollArea className="h-[calc(100dvh-360px)] sm:h-[calc(100vh-320px)]">
       <div className="rounded-md border min-w-[700px]">
         <Table>
           <TableHeader>

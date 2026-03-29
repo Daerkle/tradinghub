@@ -47,10 +47,10 @@ export function Header() {
     <header className="flex h-12 sm:h-14 shrink-0 items-center gap-2 border-b bg-background px-3 sm:px-4">
       <SidebarTrigger className="-ml-1" />
       <Separator orientation="vertical" className="mr-2 h-4" />
-      <Breadcrumb>
+      <Breadcrumb className="min-w-0 flex-1">
         <BreadcrumbList>
-          <BreadcrumbItem>
-            <BreadcrumbPage>{pageTitle}</BreadcrumbPage>
+          <BreadcrumbItem className="min-w-0">
+            <BreadcrumbPage className="truncate">{pageTitle}</BreadcrumbPage>
           </BreadcrumbItem>
         </BreadcrumbList>
       </Breadcrumb>
@@ -59,8 +59,8 @@ export function Header() {
         <div className="ml-auto flex items-center gap-2">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button size="sm">
-                <Plus className="mr-2 h-4 w-4" />
+              <Button size="sm" className="shrink-0">
+                <Plus className="h-4 w-4 md:mr-2" />
                 <span className="hidden md:inline">Hinzufügen</span>
               </Button>
             </DropdownMenuTrigger>

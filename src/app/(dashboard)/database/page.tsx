@@ -142,10 +142,10 @@ export default function DatabasePage() {
   };
 
   return (
-    <div className="container mx-auto py-6 space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="mx-auto w-full max-w-7xl space-y-6 py-4 sm:py-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Setup Datenbank</h1>
+          <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">Setup Datenbank</h1>
           <p className="text-muted-foreground">
             Qullamaggie Setups - Winners und Losers zum Lernen
           </p>
@@ -217,8 +217,8 @@ export default function DatabasePage() {
       {/* Filters */}
       <Card>
         <CardContent className="pt-6">
-          <div className="flex flex-wrap gap-4">
-            <form onSubmit={handleSearch} className="flex-1 min-w-[200px]">
+          <div className="flex flex-col gap-4 lg:flex-row lg:flex-wrap">
+            <form onSubmit={handleSearch} className="flex-1 min-w-0">
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
@@ -231,7 +231,7 @@ export default function DatabasePage() {
             </form>
 
             <Select value={typeFilter || "all"} onValueChange={(v) => setTypeFilter(v === "all" ? "" : v)}>
-              <SelectTrigger className="w-[200px]">
+              <SelectTrigger className="w-full lg:w-[200px]">
                 <SelectValue placeholder="Setup Typ" />
               </SelectTrigger>
               <SelectContent>
@@ -244,7 +244,7 @@ export default function DatabasePage() {
             </Select>
 
             <Select value={outcomeFilter || "all"} onValueChange={(v) => setOutcomeFilter(v === "all" ? "" : v)}>
-              <SelectTrigger className="w-[200px]">
+              <SelectTrigger className="w-full lg:w-[200px]">
                 <SelectValue placeholder="Outcome" />
               </SelectTrigger>
               <SelectContent>
@@ -272,22 +272,23 @@ export default function DatabasePage() {
               <p className="text-sm">Starte den Backfill um Daten zu laden</p>
             </div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Symbol</TableHead>
-                  <TableHead>Typ</TableHead>
-                  <TableHead>Datum</TableHead>
-                  <TableHead>Catalyst</TableHead>
-                  <TableHead className="text-right">Gap</TableHead>
-                  <TableHead className="text-right">Vol Ratio</TableHead>
-                  <TableHead className="text-right">EPS Surprise</TableHead>
-                  <TableHead className="text-right">Max Gain</TableHead>
-                  <TableHead>Outcome</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {setups.map((setup) => {
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Symbol</TableHead>
+                    <TableHead>Typ</TableHead>
+                    <TableHead>Datum</TableHead>
+                    <TableHead>Catalyst</TableHead>
+                    <TableHead className="text-right">Gap</TableHead>
+                    <TableHead className="text-right">Vol Ratio</TableHead>
+                    <TableHead className="text-right">EPS Surprise</TableHead>
+                    <TableHead className="text-right">Max Gain</TableHead>
+                    <TableHead>Outcome</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {setups.map((setup) => {
                   const typeInfo = SETUP_TYPE_LABELS[setup.setupType] || {
                     label: setup.setupType,
                     icon: <Database className="h-4 w-4" />,
@@ -324,15 +325,16 @@ export default function DatabasePage() {
                       <TableCell>{getOutcomeBadge(setup.outcome, setup.stoppedOut)}</TableCell>
                     </TableRow>
                   );
-                })}
-              </TableBody>
-            </Table>
+                  })}
+                </TableBody>
+              </Table>
+            </div>
           )}
         </CardContent>
 
         {/* Pagination */}
         {totalPages > 1 && (
-          <div className="flex items-center justify-between px-4 py-3 border-t">
+          <div className="flex flex-col gap-3 border-t px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="text-sm text-muted-foreground">
               Seite {page} von {totalPages}
             </div>

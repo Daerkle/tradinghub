@@ -141,7 +141,7 @@ export default function ReportsPage() {
       </div>
 
       {/* KPI Cards */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Performance Score</CardTitle>
@@ -202,7 +202,7 @@ export default function ReportsPage() {
       </div>
 
       {/* Extended Stats */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">R-Multiple</CardTitle>
@@ -248,7 +248,7 @@ export default function ReportsPage() {
 
       {/* Tabs for different reports */}
       <Tabs defaultValue="time" className="space-y-4">
-        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4">
+        <TabsList className="grid h-auto w-full grid-cols-2 gap-1 sm:grid-cols-4">
           <TabsTrigger value="time">
             <Clock className="h-4 w-4 sm:mr-2" />
             <span className="hidden sm:inline">Zeit</span>
@@ -370,32 +370,34 @@ export default function ReportsPage() {
               <CardTitle>Detaillierte Zeit-Statistiken</CardTitle>
             </CardHeader>
             <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Stunde</TableHead>
-                    <TableHead className="text-right">Trades</TableHead>
-                    <TableHead className="text-right">Win Rate</TableHead>
-                    <TableHead className="text-right">P&L</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {performanceByHour.map((hour) => (
-                    <TableRow key={hour.hour}>
-                      <TableCell className="font-medium">{hour.hour}:00 - {hour.hour}:59</TableCell>
-                      <TableCell className="text-right">{hour.trades}</TableCell>
-                      <TableCell className="text-right">
-                        <Badge variant={hour.winRate >= 50 ? "default" : "secondary"}>
-                          {formatPercent(hour.winRate)}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className={`text-right font-medium ${hour.pnl >= 0 ? "text-green-600" : "text-red-600"}`}>
-                        {formatCurrency(hour.pnl)}
-                      </TableCell>
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Stunde</TableHead>
+                      <TableHead className="text-right">Trades</TableHead>
+                      <TableHead className="text-right">Win Rate</TableHead>
+                      <TableHead className="text-right">P&L</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {performanceByHour.map((hour) => (
+                      <TableRow key={hour.hour}>
+                        <TableCell className="font-medium">{hour.hour}:00 - {hour.hour}:59</TableCell>
+                        <TableCell className="text-right">{hour.trades}</TableCell>
+                        <TableCell className="text-right">
+                          <Badge variant={hour.winRate >= 50 ? "default" : "secondary"}>
+                            {formatPercent(hour.winRate)}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className={`text-right font-medium ${hour.pnl >= 0 ? "text-green-600" : "text-red-600"}`}>
+                          {formatCurrency(hour.pnl)}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
             </CardContent>
           </Card>
         </TabsContent>
@@ -483,6 +485,7 @@ export default function ReportsPage() {
               <CardTitle>Alle Symbole</CardTitle>
             </CardHeader>
             <CardContent>
+              <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -513,6 +516,7 @@ export default function ReportsPage() {
                   ))}
                 </TableBody>
               </Table>
+              </div>
             </CardContent>
           </Card>
         </TabsContent>
@@ -575,6 +579,7 @@ export default function ReportsPage() {
               <CardTitle>Alle Setups</CardTitle>
             </CardHeader>
             <CardContent>
+              <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -605,6 +610,7 @@ export default function ReportsPage() {
                   ))}
                 </TableBody>
               </Table>
+              </div>
             </CardContent>
           </Card>
         </TabsContent>

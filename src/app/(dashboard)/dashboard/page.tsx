@@ -371,7 +371,7 @@ export default function DashboardPage() {
       </div>
 
       {/* KPI Grid */}
-      <div className="grid gap-4 grid-cols-2 lg:grid-cols-4 animate-in slide-in-from-bottom-8 duration-500 delay-500">
+      <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 animate-in slide-in-from-bottom-8 duration-500 delay-500">
         <Card className="hover:bg-accent/50 transition-colors">
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">Netto P&L</CardTitle>
@@ -559,7 +559,7 @@ export default function DashboardPage() {
 
       {/* Main Charts Area */}
       <Tabs defaultValue="equity" className="space-y-4 animate-in fade-in duration-700 delay-700">
-        <TabsList className="bg-muted/50 p-1">
+        <TabsList className="grid h-auto w-full grid-cols-2 gap-1 bg-muted/50 p-1 sm:grid-cols-4">
           <TabsTrigger value="equity" className="data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm transition-all">Equity</TabsTrigger>
           <TabsTrigger value="radar" className="data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm transition-all">Radar</TabsTrigger>
           <TabsTrigger value="weekday" className="data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm transition-all">Wochentage</TabsTrigger>

@@ -272,7 +272,7 @@ export function AppSidebar() {
                   className="data-[state=open]:bg-sidebar-accent"
                 >
                   <Avatar className="h-8 w-8">
-                    <AvatarImage src={user?.avatar?.url} />
+                    <AvatarImage src={user?.avatar?.url} alt={user?.username ? `${user.username} Avatar` : "User Avatar"} />
                     <AvatarFallback>
                       {user?.username?.charAt(0).toUpperCase() || "U"}
                     </AvatarFallback>

@@ -228,7 +228,7 @@ export default function TradesPage() {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid gap-4 md:grid-cols-4">
+      <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 xl:grid-cols-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Gesamt P&L</CardTitle>
@@ -296,8 +296,8 @@ export default function TradesPage() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="flex flex-wrap gap-4">
-            <div className="flex-1 min-w-[200px]">
+          <div className="flex flex-col gap-4 md:flex-row md:flex-wrap">
+            <div className="flex-1 min-w-0">
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
@@ -309,7 +309,7 @@ export default function TradesPage() {
               </div>
             </div>
             <Select value={sideFilter} onValueChange={setSideFilter}>
-              <SelectTrigger className="w-[140px]">
+              <SelectTrigger className="w-full md:w-[140px]">
                 <SelectValue placeholder="Seite" />
               </SelectTrigger>
               <SelectContent>
@@ -319,7 +319,7 @@ export default function TradesPage() {
               </SelectContent>
             </Select>
             <Select value={resultFilter} onValueChange={setResultFilter}>
-              <SelectTrigger className="w-[140px]">
+              <SelectTrigger className="w-full md:w-[140px]">
                 <SelectValue placeholder="Ergebnis" />
               </SelectTrigger>
               <SelectContent>
@@ -354,7 +354,7 @@ export default function TradesPage() {
             </div>
           ) : (
             <>
-              <div className="rounded-md border">
+              <div className="overflow-x-auto rounded-md border">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -438,7 +438,7 @@ export default function TradesPage() {
                           {trade.pnl >= 0 ? "+" : ""}${trade.pnl.toFixed(2)}
                         </TableCell>
                         <TableCell>
-                          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <div className="flex items-center gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
                             <Link href={`/trades/${trade.id}`}>
                               <Button variant="ghost" size="icon" className="h-8 w-8">
                                 <Eye className="h-4 w-4" />
@@ -479,7 +479,7 @@ export default function TradesPage() {
 
               {/* Pagination */}
               {totalPages > 1 && (
-                <div className="flex items-center justify-between mt-4">
+                <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <p className="text-sm text-muted-foreground">
                     Zeige {startIndex + 1}-{Math.min(startIndex + tradesPerPage, filteredTrades.length)} von {filteredTrades.length} Trades
                   </p>

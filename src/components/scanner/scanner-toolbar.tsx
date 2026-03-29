@@ -111,42 +111,44 @@ export function ScannerToolbar({
 
   return (
     <>
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
         <div className="relative w-full sm:w-auto">
           <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
           <Input placeholder="Symbol, Name, Sektor..." className="pl-8 w-full sm:w-[250px]" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
         </div>
 
-        <Button
-          variant={compareMode ? "default" : "outline"}
-          size="icon"
-          className={compareMode ? "bg-primary text-primary-foreground" : ""}
-          onClick={() => { setCompareMode(!compareMode); if (!compareMode) clearSelection(); }}
-        >
-          <TooltipProvider><Tooltip><TooltipTrigger asChild><GitCompare className="h-4 w-4" /></TooltipTrigger>
-            <TooltipContent>Vergleichsmodus {compareMode ? "beenden" : "starten"}</TooltipContent>
-          </Tooltip></TooltipProvider>
-        </Button>
-
-        {compareMode && selectedCount > 0 && (
-          <Button variant="secondary" className="gap-2 bg-zinc-800 text-zinc-200 hover:bg-zinc-700" onClick={onShowCompare}>
-            <GitCompare className="h-4 w-4" />Vergleichen ({selectedCount})
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            variant={compareMode ? "default" : "outline"}
+            size="icon"
+            className={compareMode ? "bg-primary text-primary-foreground" : ""}
+            onClick={() => { setCompareMode(!compareMode); if (!compareMode) clearSelection(); }}
+          >
+            <TooltipProvider><Tooltip><TooltipTrigger asChild><GitCompare className="h-4 w-4" /></TooltipTrigger>
+              <TooltipContent>Vergleichsmodus {compareMode ? "beenden" : "starten"}</TooltipContent>
+            </Tooltip></TooltipProvider>
           </Button>
-        )}
 
-        <TooltipProvider><Tooltip><TooltipTrigger asChild>
-          <Button variant="outline" size="icon" onClick={() => handleCopyToClipboard("current")} disabled={displayCount === 0}>
-            {copiedList === "current" ? <Check className="h-4 w-4 text-zinc-300" /> : <Copy className="h-4 w-4" />}
-          </Button>
-        </TooltipTrigger><TooltipContent>Aktuelle Liste kopieren ({displayCount} Symbole)</TooltipContent></Tooltip></TooltipProvider>
+          {compareMode && selectedCount > 0 && (
+            <Button variant="secondary" className="gap-2 bg-zinc-800 text-zinc-200 hover:bg-zinc-700" onClick={onShowCompare}>
+              <GitCompare className="h-4 w-4" />Vergleichen ({selectedCount})
+            </Button>
+          )}
 
-        <TooltipProvider><Tooltip><TooltipTrigger asChild>
-          <Button variant="outline" size="icon" onClick={() => handleDownload("current")} disabled={displayCount === 0}>
-            <Download className="h-4 w-4" />
-          </Button>
-        </TooltipTrigger><TooltipContent>Aktuelle Liste als TXT exportieren</TooltipContent></Tooltip></TooltipProvider>
+          <TooltipProvider><Tooltip><TooltipTrigger asChild>
+            <Button variant="outline" size="icon" onClick={() => handleCopyToClipboard("current")} disabled={displayCount === 0}>
+              {copiedList === "current" ? <Check className="h-4 w-4 text-zinc-300" /> : <Copy className="h-4 w-4" />}
+            </Button>
+          </TooltipTrigger><TooltipContent>Aktuelle Liste kopieren ({displayCount} Symbole)</TooltipContent></Tooltip></TooltipProvider>
 
-        <div className="flex items-center border rounded-lg p-0.5 bg-muted/30">
+          <TooltipProvider><Tooltip><TooltipTrigger asChild>
+            <Button variant="outline" size="icon" onClick={() => handleDownload("current")} disabled={displayCount === 0}>
+              <Download className="h-4 w-4" />
+            </Button>
+          </TooltipTrigger><TooltipContent>Aktuelle Liste als TXT exportieren</TooltipContent></Tooltip></TooltipProvider>
+        </div>
+
+        <div className="flex items-center border rounded-lg p-0.5 bg-muted/30 self-start">
           <TooltipProvider><Tooltip><TooltipTrigger asChild>
             <Button variant={viewMode === "table" ? "default" : "ghost"} size="icon" className="h-8 w-8" onClick={() => setViewMode("table")}>
               <LayoutList className="h-4 w-4" />
@@ -160,7 +162,7 @@ export function ScannerToolbar({
         </div>
 
         {viewMode === "cards" && (
-          <div className="hidden sm:flex items-center gap-1.5 border rounded-lg p-1 bg-muted/30">
+          <div className="flex items-center gap-1.5 border rounded-lg p-1 bg-muted/30 overflow-x-auto">
             <Columns className="h-4 w-4 text-muted-foreground ml-1" />
             {[2, 3, 4, 5, 6].map((num) => (
               <Button key={num} variant={cardsPerRow === num ? "default" : "ghost"} size="sm" className="h-7 w-7 p-0 text-xs" onClick={() => setCardsPerRow(num)}>
@@ -172,7 +174,8 @@ export function ScannerToolbar({
       </div>
 
       {/* TradingView Export Section */}
-      <div className="hidden sm:flex flex-wrap items-center gap-2 p-3 bg-muted/30 rounded-lg">
+      <div className="overflow-x-auto rounded-lg bg-muted/30 p-3">
+        <div className="flex min-w-max items-center gap-2">
         <span className="text-sm font-medium text-muted-foreground mr-2">TradingView Export:</span>
         {[
           { key: "ep", label: "EP", count: epCount, icon: Zap, color: "text-zinc-400" },
@@ -200,6 +203,7 @@ export function ScannerToolbar({
             </TooltipTrigger><TooltipContent>Als TXT herunterladen</TooltipContent></Tooltip></TooltipProvider>
           </div>
         ))}
+        </div>
       </div>
     </>
   );

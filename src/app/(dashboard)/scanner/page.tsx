@@ -153,9 +153,9 @@ export default function ScannerPage() {
             Momentum Leader, Swing-Setups und Breakout-Muster
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {lastUpdated && (
-            <span className="text-sm text-muted-foreground">
+            <span className="text-sm text-muted-foreground sm:text-right">
               Zuletzt aktualisiert: {lastUpdated}
               {scanStats && scanStats.fromCache > 0 && ` (${scanStats.fromCache} aus Cache)`}
             </span>
@@ -166,7 +166,7 @@ export default function ScannerPage() {
               <span className="sm:hidden">Stop</span>
             </Button>
           )}
-          <Button size="sm" onClick={() => refresh()} disabled={loading}>
+          <Button size="sm" onClick={() => refresh()} disabled={loading} className="shrink-0">
             {loading ? (
               <Loader2 className="h-4 w-4 sm:mr-2 animate-spin" />
             ) : (
