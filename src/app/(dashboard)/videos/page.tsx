@@ -78,7 +78,7 @@ export default function VideosPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Videos</h1>
@@ -96,7 +96,7 @@ export default function VideosPage() {
 
       {videos.length === 0 ? (
         <Card>
-          <CardContent className="flex flex-col items-center justify-center py-12">
+          <CardContent className="flex flex-col items-center justify-center py-6">
             <Video className="h-12 w-12 text-muted-foreground mb-4" />
             <h3 className="text-lg font-medium mb-2">Noch keine Videos</h3>
             <p className="text-muted-foreground text-center mb-4">

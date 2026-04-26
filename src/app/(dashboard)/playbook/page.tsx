@@ -25,15 +25,10 @@ import {
 } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
 import { PlaybookService, PlaybookData } from "@/lib/models";
-
-function formatCurrency(value: number): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-  }).format(value);
-}
+import { useCurrencyFormatter } from "@/hooks/use-currency-formatter";
 
 export default function PlaybookPage() {
+  const { formatMoney } = useCurrencyFormatter();
   const [setups, setSetups] = useState<PlaybookData[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -77,7 +72,7 @@ export default function PlaybookPage() {
 
   if (isLoading) {
     return (
-      <div className="space-y-6">
+      <div className="space-y-4">
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold tracking-tight">Playbook</h1>
@@ -112,7 +107,7 @@ export default function PlaybookPage() {
 
   if (error) {
     return (
-      <div className="space-y-6">
+      <div className="space-y-4">
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold tracking-tight">Playbook</h1>
@@ -128,7 +123,7 @@ export default function PlaybookPage() {
           </Button>
         </div>
         <Card className="border-destructive">
-          <CardContent className="pt-6">
+          <CardContent className="pt-4">
             <p className="text-destructive">{error}</p>
           </CardContent>
         </Card>
@@ -137,7 +132,7 @@ export default function PlaybookPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Playbook</h1>
@@ -155,7 +150,7 @@ export default function PlaybookPage() {
 
       {setups.length === 0 ? (
         <Card>
-          <CardContent className="pt-6 text-center">
+          <CardContent className="pt-4 text-center">
             <p className="text-muted-foreground mb-4">
               Noch keine Trading-Setups vorhanden.
             </p>
@@ -225,7 +220,7 @@ export default function PlaybookPage() {
                     }`}
                   >
                     Ø: {setup.avgPnl >= 0 ? "+" : ""}
-                    {formatCurrency(setup.avgPnl)}
+                    {formatMoney(setup.avgPnl)}
                   </span>
                 </div>
               </CardContent>

@@ -23,6 +23,7 @@ import { formatNumber, getRSRatingColor, getSetupScoreColor } from "@/components
 import type { StockData, NewsItem } from "@/types/scanner";
 import type { OptionsOverview } from "@/types/options";
 import type { SeasonalityOverview } from "@/types/seasonality";
+import { useCurrencyFormatter } from "@/hooks/use-currency-formatter";
 
 function NewsSection({ symbol }: { symbol: string }) {
   const [news, setNews] = useState<NewsItem[]>([]);
@@ -118,16 +119,6 @@ function NewsSection({ symbol }: { symbol: string }) {
   );
 }
 
-function formatMoney(value: number | null | undefined, decimals = 2): string {
-  if (value === null || value === undefined || !Number.isFinite(value)) return "-";
-  return value.toLocaleString("de-DE", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: decimals,
-    maximumFractionDigits: decimals,
-  });
-}
-
 function formatCompactNumber(value: number | null | undefined, decimals = 1): string {
   if (value === null || value === undefined || !Number.isFinite(value)) return "-";
 
@@ -138,11 +129,6 @@ function formatCompactNumber(value: number | null | undefined, decimals = 1): st
   if (abs >= 1_000_000) return `${sign}${(abs / 1_000_000).toFixed(decimals)}M`;
   if (abs >= 1_000) return `${sign}${(abs / 1_000).toFixed(decimals)}K`;
   return `${sign}${abs.toFixed(decimals)}`;
-}
-
-function formatCompactCurrency(value: number | null | undefined, decimals = 1): string {
-  if (value === null || value === undefined || !Number.isFinite(value)) return "-";
-  return `$${formatCompactNumber(value, decimals)}`;
 }
 
 function formatMetricPercent(value: number | null | undefined, decimals = 1): string {
@@ -226,7 +212,7 @@ function SeasonalitySection({ symbol }: { symbol: string }) {
 
   if (loading) {
     return (
-      <Card className="p-4">
+      <Card className="p-3">
         <div className="space-y-3">
           <Skeleton className="h-6 w-44" />
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -242,7 +228,7 @@ function SeasonalitySection({ symbol }: { symbol: string }) {
 
   if (error || !data) {
     return (
-      <Card className="p-4">
+      <Card className="p-3">
         <h4 className="text-sm font-medium">Seasonality</h4>
         <p className="mt-2 text-sm text-muted-foreground">
           {error || "Keine Seasonality-Daten verfuegbar."}
@@ -255,8 +241,8 @@ function SeasonalitySection({ symbol }: { symbol: string }) {
   const currentWeekday = data.summary.currentWeekdaySeasonality;
 
   return (
-    <div className="space-y-4">
-      <Card className="p-4">
+    <div className="space-y-3">
+      <Card className="p-3">
         <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
           <div>
             <h4 className="text-sm font-medium">Seasonality</h4>
@@ -270,7 +256,7 @@ function SeasonalitySection({ symbol }: { symbol: string }) {
           </div>
         </div>
 
-        <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <OptionsMetric
             label="Bester Monat"
             value={data.summary.bestMonth ? `${data.summary.bestMonth.label} ${formatMetricPercent(data.summary.bestMonth.avgReturnPct, 2)}` : "-"}
@@ -293,8 +279,8 @@ function SeasonalitySection({ symbol }: { symbol: string }) {
           />
         </div>
 
-        <div className="mt-4 grid gap-4 xl:grid-cols-2">
-          <div className="rounded-lg border border-white/10 bg-black/10 p-3">
+        <div className="mt-3 grid gap-3 xl:grid-cols-2">
+          <div className="rounded-md border border-white/10 bg-black/10 p-3">
             <div className="mb-2 text-sm font-medium">Monate</div>
             <div className="space-y-2">
               {data.monthly.map((bucket) => (
@@ -308,7 +294,7 @@ function SeasonalitySection({ symbol }: { symbol: string }) {
             </div>
           </div>
 
-          <div className="rounded-lg border border-white/10 bg-black/10 p-3">
+          <div className="rounded-md border border-white/10 bg-black/10 p-3">
             <div className="mb-2 text-sm font-medium">Wochentage</div>
             <div className="space-y-2">
               {data.weekday.map((bucket) => (
@@ -324,13 +310,13 @@ function SeasonalitySection({ symbol }: { symbol: string }) {
         </div>
       </Card>
 
-      <Card className="p-4">
-        <div className="mb-3 flex items-center justify-between">
+      <Card className="p-3">
+        <div className="mb-2 flex items-center justify-between">
           <h5 className="text-sm font-medium">Tagesfenster im Monat</h5>
           <span className="text-xs text-muted-foreground">Beste / schlechteste Kalendertage</span>
         </div>
-        <div className="grid gap-4 xl:grid-cols-2">
-          <div className="rounded-lg border border-green-500/20 bg-green-500/5 p-3">
+        <div className="grid gap-3 xl:grid-cols-2">
+          <div className="rounded-md border border-green-500/20 bg-green-500/5 p-3">
             <div className="mb-2 text-sm font-medium text-green-300">Stark</div>
             <div className="space-y-2">
               {data.summary.strongestDaysOfMonth.map((bucket) => (
@@ -341,7 +327,7 @@ function SeasonalitySection({ symbol }: { symbol: string }) {
               ))}
             </div>
           </div>
-          <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3">
+          <div className="rounded-md border border-red-500/20 bg-red-500/5 p-3">
             <div className="mb-2 text-sm font-medium text-red-300">Schwach</div>
             <div className="space-y-2">
               {data.summary.weakestDaysOfMonth.map((bucket) => (
@@ -354,7 +340,7 @@ function SeasonalitySection({ symbol }: { symbol: string }) {
           </div>
         </div>
 
-        <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <OptionsMetric label="1M Return" value={formatMetricPercent(data.trailingReturnPct.month1, 2)} />
           <OptionsMetric label="3M Return" value={formatMetricPercent(data.trailingReturnPct.month3, 2)} />
           <OptionsMetric label="6M Return" value={formatMetricPercent(data.trailingReturnPct.month6, 2)} />
@@ -377,14 +363,34 @@ function OptionsMetric({
   tone?: string;
 }) {
   return (
-    <div className="rounded-lg border border-white/10 bg-black/10 p-3">
+    <div className="rounded-md border border-white/10 bg-black/10 p-3">
       <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</div>
       <div className={cn("mt-1 text-lg font-semibold", tone)}>{value}</div>
     </div>
   );
 }
 
+function percentTone(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return "text-zinc-400";
+  return value >= 0 ? "text-green-300" : "text-red-300";
+}
+
+function CompactPerformanceMetric({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="min-w-0 rounded-md border border-white/10 bg-black/10 px-2 py-1.5">
+      <div className="text-[10px] uppercase text-muted-foreground">{label}</div>
+      <div className={cn("font-mono text-sm font-semibold", percentTone(value))}>{formatMetricPercent(value, 1)}</div>
+    </div>
+  );
+}
+
 function OptionsSection({ symbol }: { symbol: string }) {
+  const { formatMoney, formatCompactMoney } = useCurrencyFormatter();
+  const formatUsdValue = (value: number | null | undefined, decimals = 2) =>
+    formatMoney(value, "USD", {
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals,
+    });
   const [data, setData] = useState<OptionsOverview | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -426,7 +432,7 @@ function OptionsSection({ symbol }: { symbol: string }) {
 
   if (loading) {
     return (
-      <Card className="p-4">
+      <Card className="p-3">
         <div className="space-y-3">
           <Skeleton className="h-6 w-48" />
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -442,7 +448,7 @@ function OptionsSection({ symbol }: { symbol: string }) {
 
   if (error || !data) {
     return (
-      <Card className="p-4">
+      <Card className="p-3">
         <div className="flex items-start justify-between gap-3">
           <div>
             <h4 className="text-sm font-medium flex items-center gap-2">
@@ -480,8 +486,8 @@ function OptionsSection({ symbol }: { symbol: string }) {
         : "text-green-300";
 
   return (
-    <div className="space-y-4">
-      <Card className="p-4">
+    <div className="space-y-3">
+      <Card className="p-3">
         <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
           <div>
             <h4 className="text-sm font-medium flex items-center gap-2">
@@ -502,26 +508,26 @@ function OptionsSection({ symbol }: { symbol: string }) {
           </a>
         </div>
 
-        <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <OptionsMetric label="P/C OI" value={formatNumber(data.summary.putCallOiRatio, 2)} />
           <OptionsMetric label="P/C Vol" value={formatNumber(data.summary.putCallVolumeRatio, 2)} />
-          <OptionsMetric label="Call Wall" value={data.summary.callWall !== null ? formatMoney(data.summary.callWall, 0) : "-"} />
-          <OptionsMetric label="Put Wall" value={data.summary.putWall !== null ? formatMoney(data.summary.putWall, 0) : "-"} />
-          <OptionsMetric label="Max Pain" value={data.summary.maxPain !== null ? formatMoney(data.summary.maxPain, 0) : "-"} />
+          <OptionsMetric label="Call Wall" value={data.summary.callWall !== null ? formatUsdValue(data.summary.callWall, 0) : "-"} />
+          <OptionsMetric label="Put Wall" value={data.summary.putWall !== null ? formatUsdValue(data.summary.putWall, 0) : "-"} />
+          <OptionsMetric label="Max Pain" value={data.summary.maxPain !== null ? formatUsdValue(data.summary.maxPain, 0) : "-"} />
           <OptionsMetric label="ATM IV" value={data.summary.atmIvPct !== null ? `${data.summary.atmIvPct.toFixed(1)}%` : "-"} />
           <OptionsMetric label="Skew" value={formatSkew(data.summary.skewPct)} tone={skewTone} />
           <OptionsMetric label="Net GEX est." value={formatCompactNumber(data.summary.netGexEstimate)} tone={netGexTone} />
-          <OptionsMetric label="Expected Move" value={data.summary.expectedMoveUsd !== null ? `${formatMoney(data.summary.expectedMoveUsd, 2)} / ${formatMetricPercent(data.summary.expectedMovePct, 2)}` : "-"} />
-          <OptionsMetric label="Gamma Flip" value={data.summary.gammaFlipZone !== null ? formatMoney(data.summary.gammaFlipZone, 0) : "-"} />
+          <OptionsMetric label="Expected Move" value={data.summary.expectedMoveUsd !== null ? `${formatUsdValue(data.summary.expectedMoveUsd, 2)} / ${formatMetricPercent(data.summary.expectedMovePct, 2)}` : "-"} />
+          <OptionsMetric label="Gamma Flip" value={data.summary.gammaFlipZone !== null ? formatUsdValue(data.summary.gammaFlipZone, 0) : "-"} />
           <OptionsMetric label="Call OI Fokus" value={data.summary.callOiConcentrationPct !== null ? `${data.summary.callOiConcentrationPct.toFixed(0)}%` : "-"} />
           <OptionsMetric label="Put OI Fokus" value={data.summary.putOiConcentrationPct !== null ? `${data.summary.putOiConcentrationPct.toFixed(0)}%` : "-"} />
         </div>
 
-        <div className="mt-4 flex flex-wrap gap-2">
+        <div className="mt-3 flex flex-wrap gap-2">
           <Badge variant="secondary" className={cn("border", getBiasTone(data.bias))}>
             {getBiasLabel(data.bias)}
           </Badge>
-          <Badge variant="outline">Spot {formatMoney(data.underlyingPrice, 2)}</Badge>
+          <Badge variant="outline">Spot {formatUsdValue(data.underlyingPrice, 2)}</Badge>
           {data.nearestExpiry && (
             <Badge variant="outline">Naechster Expiry {formatExpiryLabel(data.nearestExpiry)}</Badge>
           )}
@@ -529,15 +535,15 @@ function OptionsSection({ symbol }: { symbol: string }) {
         </div>
       </Card>
 
-      <div className="grid gap-4 xl:grid-cols-2">
-        <Card className="p-4">
-          <div className="mb-3 flex items-center justify-between">
+      <div className="grid gap-3 xl:grid-cols-2">
+        <Card className="p-3">
+          <div className="mb-2 flex items-center justify-between">
             <h5 className="text-sm font-medium">Expiry Snapshot</h5>
             <span className="text-xs text-muted-foreground">Front Expiries</span>
           </div>
           <div className="space-y-2">
             {data.expiries.map((expiry) => (
-              <div key={expiry.expiration} className="rounded-lg border border-white/10 bg-black/10 p-3">
+              <div key={expiry.expiration} className="rounded-md border border-white/10 bg-black/10 p-3">
                 <div className="flex items-center justify-between gap-2">
                   <div>
                     <div className="font-medium">{formatExpiryLabel(expiry.expiration)}</div>
@@ -556,7 +562,7 @@ function OptionsSection({ symbol }: { symbol: string }) {
                   </div>
                   <div>
                     <div className="text-muted-foreground">Max Pain</div>
-                    <div className="font-medium">{expiry.maxPain !== null ? formatMoney(expiry.maxPain, 0) : "-"}</div>
+                    <div className="font-medium">{expiry.maxPain !== null ? formatUsdValue(expiry.maxPain, 0) : "-"}</div>
                   </div>
                   <div>
                     <div className="text-muted-foreground">ATM IV</div>
@@ -568,16 +574,16 @@ function OptionsSection({ symbol }: { symbol: string }) {
           </div>
         </Card>
 
-        <Card className="p-4">
-          <div className="mb-3 flex items-center justify-between">
+        <Card className="p-3">
+          <div className="mb-2 flex items-center justify-between">
             <h5 className="text-sm font-medium">Key Strikes</h5>
             <span className="text-xs text-muted-foreground">Nach Open Interest</span>
           </div>
           <div className="space-y-2">
             {data.strikeLevels.map((level) => (
-              <div key={level.strike} className="rounded-lg border border-white/10 bg-black/10 p-3">
+              <div key={level.strike} className="rounded-md border border-white/10 bg-black/10 p-3">
                 <div className="flex items-center justify-between gap-2">
-                  <div className="font-medium">{formatMoney(level.strike, 0)}</div>
+                  <div className="font-medium">{formatUsdValue(level.strike, 0)}</div>
                   <Badge variant="outline">{formatMetricPercent(level.distanceFromSpotPct, 1)}</Badge>
                 </div>
                 <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
@@ -608,8 +614,8 @@ function OptionsSection({ symbol }: { symbol: string }) {
         </Card>
       </div>
 
-      <Card className="p-4">
-        <div className="mb-3 flex items-center justify-between">
+      <Card className="p-3">
+        <div className="mb-2 flex items-center justify-between">
           <h5 className="text-sm font-medium">Hot Contracts</h5>
           <span className="text-xs text-muted-foreground">Volumen, OI und Naehe zum Spot</span>
         </div>
@@ -645,13 +651,13 @@ function OptionsSection({ symbol }: { symbol: string }) {
                       {contract.side === "call" ? "CALL" : "PUT"}
                     </Badge>
                   </TableCell>
-                  <TableCell>{formatMoney(contract.strike, 0)}</TableCell>
+                  <TableCell>{formatUsdValue(contract.strike, 0)}</TableCell>
                   <TableCell>{formatExpiryLabel(contract.expiration)}</TableCell>
                   <TableCell>{formatCompactNumber(contract.volume, 1)}</TableCell>
                   <TableCell>{formatCompactNumber(contract.openInterest, 1)}</TableCell>
                   <TableCell>{formatNumber(contract.volumeOiRatio, 2)}</TableCell>
                   <TableCell>{contract.impliedVolatilityPct !== null ? `${contract.impliedVolatilityPct.toFixed(1)}%` : "-"}</TableCell>
-                  <TableCell>{formatCompactCurrency(contract.premiumVolumeUsd, 1)}</TableCell>
+                  <TableCell>{formatCompactMoney(contract.premiumVolumeUsd, "USD", 1)}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -760,19 +766,19 @@ function ChartSection({ stock }: { stock: StockData }) {
       {chartMode === "journal" && (
         <>
           {loading && (
-            <div className="h-[250px] sm:h-[350px] flex items-center justify-center bg-muted rounded-md">
+            <div className="flex h-[220px] items-center justify-center rounded-md bg-muted">
               <Skeleton className="h-full w-full rounded-md" />
             </div>
           )}
 
           {!loading && chartData.length > 0 && (
-            <div className="h-[250px] sm:h-[350px]">
-              <StockChart data={chartData} symbol={stock.symbol} height={250} />
+            <div className="h-[220px]">
+              <StockChart data={chartData} symbol={stock.symbol} height={220} />
             </div>
           )}
 
           {!loading && chartData.length === 0 && (
-            <div className="h-[250px] sm:h-[350px] flex items-center justify-center bg-muted rounded-md px-4 text-center">
+            <div className="flex h-[220px] items-center justify-center rounded-md bg-muted px-3 text-center text-sm">
               <span className="text-muted-foreground">
                 Keine Journal-Chart-Daten verfügbar. Bitte TradingView nutzen.
               </span>
@@ -782,7 +788,7 @@ function ChartSection({ stock }: { stock: StockData }) {
       )}
 
       {chartMode === "tradingview" && (
-        <div className="h-[250px] sm:h-[350px] overflow-hidden rounded-md border bg-black">
+        <div className="h-[220px] overflow-hidden rounded-md border bg-black">
           <iframe
             title={`TradingView ${stock.symbol}`}
             src={tradingViewSrc}
@@ -797,12 +803,13 @@ function ChartSection({ stock }: { stock: StockData }) {
 }
 
 export function StockDetailPanel({ stock }: StockDetailPanelProps) {
+  const { formatMoney } = useCurrencyFormatter();
   return (
-    <div className="p-4 bg-muted/30 border-t">
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="space-y-6 lg:col-span-2">
+    <div className="border-t bg-muted/30 p-3 sm:p-4">
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
+        <div className="space-y-3 lg:col-span-2">
           <div>
-            <h4 className="text-sm font-medium mb-3 flex items-center gap-2">
+            <h4 className="mb-2 flex items-center gap-2 text-sm font-medium">
               <BarChart3 className="h-4 w-4" />
               Chart (100 Tage)
             </h4>
@@ -813,13 +820,13 @@ export function StockDetailPanel({ stock }: StockDetailPanelProps) {
           <SeasonalitySection symbol={stock.symbol} />
         </div>
 
-        <div className="space-y-4">
-          <Card className="p-4">
-            <h4 className="text-sm font-medium text-zinc-400 mb-3 flex items-center gap-2">
+        <div className="space-y-3">
+          <Card className="p-3">
+            <h4 className="mb-2 flex items-center gap-2 text-sm font-medium text-zinc-400">
               <Star className="h-4 w-4 text-zinc-500" />
               Ratings
             </h4>
-            <div className="space-y-3">
+            <div className="space-y-2.5">
               <div className="flex items-center justify-between">
                 <span className="text-sm">RS Rating</span>
                 <div className={cn("w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm", getRSRatingColor(stock.rsRating))}>
@@ -888,14 +895,29 @@ export function StockDetailPanel({ stock }: StockDetailPanelProps) {
               {stock.targetPrice > 0 && (
                 <div className="flex items-center justify-between">
                   <span className="text-sm">Kursziel</span>
-                  <span className="font-medium">${formatNumber(stock.targetPrice)}</span>
+                  <span className="font-medium">{formatMoney(stock.targetPrice, "USD")}</span>
                 </div>
               )}
             </div>
           </Card>
 
-          <Card className="p-4">
-            <h4 className="text-sm font-medium text-muted-foreground mb-3 flex items-center gap-2">
+          <Card className="p-3">
+            <h4 className="mb-2 flex items-center gap-2 text-sm font-medium text-zinc-400">
+              <BarChart3 className="h-4 w-4 text-zinc-500" />
+              Performance
+            </h4>
+            <div className="grid grid-cols-2 gap-1.5">
+              <CompactPerformanceMetric label="Tag" value={stock.changePercent} />
+              <CompactPerformanceMetric label="1M" value={stock.momentum1M} />
+              <CompactPerformanceMetric label="3M" value={stock.momentum3M} />
+              <CompactPerformanceMetric label="6M" value={stock.momentum6M} />
+              <CompactPerformanceMetric label="1Y" value={stock.momentum1Y} />
+              <CompactPerformanceMetric label="ADR" value={stock.adrPercent} />
+            </div>
+          </Card>
+
+          <Card className="p-3">
+            <h4 className="text-sm font-medium text-muted-foreground mb-2 flex items-center gap-2">
               <Building2 className="h-4 w-4" />
               Sektor & Industrie
             </h4>
@@ -912,8 +934,8 @@ export function StockDetailPanel({ stock }: StockDetailPanelProps) {
           </Card>
 
           {(stock.shortFloat || stock.instOwn || stock.insiderOwn || stock.earningsDate) && (
-            <Card className="p-4">
-              <h4 className="text-sm font-medium text-muted-foreground mb-3 flex items-center gap-2">
+            <Card className="p-3">
+              <h4 className="text-sm font-medium text-muted-foreground mb-2 flex items-center gap-2">
                 <Users className="h-4 w-4" />
                 Ownership & Shorts
               </h4>
@@ -969,8 +991,8 @@ export function StockDetailPanel({ stock }: StockDetailPanelProps) {
           )}
 
           {stock.proxyPlays && stock.proxyPlays.length > 0 && (
-            <Card className="p-4">
-              <h4 className="text-sm font-medium text-muted-foreground mb-3 flex items-center gap-2">
+            <Card className="p-3">
+              <h4 className="text-sm font-medium text-muted-foreground mb-2 flex items-center gap-2">
                 <Users className="h-4 w-4" />Proxy Plays
               </h4>
               <div className="flex flex-wrap gap-2">
@@ -985,13 +1007,13 @@ export function StockDetailPanel({ stock }: StockDetailPanelProps) {
             </Card>
           )}
 
-          <Card className="p-4">
-            <h4 className="text-sm font-medium text-muted-foreground mb-3">Technische Daten</h4>
+          <Card className="p-3">
+            <h4 className="text-sm font-medium text-muted-foreground mb-2">Technische Daten</h4>
             <div className="grid grid-cols-2 gap-2 text-sm">
-              <div className="flex justify-between"><span className="text-muted-foreground">EMA 10</span><span>${formatNumber(stock.ema10)}</span></div>
-              <div className="flex justify-between"><span className="text-muted-foreground">EMA 20</span><span>${formatNumber(stock.ema20)}</span></div>
-              <div className="flex justify-between"><span className="text-muted-foreground">SMA 50</span><span>${formatNumber(stock.sma50)}</span></div>
-              <div className="flex justify-between"><span className="text-muted-foreground">SMA 200</span><span>${formatNumber(stock.sma200)}</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">EMA 10</span><span>{formatMoney(stock.ema10, "USD")}</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">EMA 20</span><span>{formatMoney(stock.ema20, "USD")}</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">SMA 50</span><span>{formatMoney(stock.sma50, "USD")}</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">SMA 200</span><span>{formatMoney(stock.sma200, "USD")}</span></div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">RSI</span>
                 <span className={cn(stock.rsi > 70 || stock.rsi < 30 ? "text-foreground" : "text-zinc-400")}>{formatNumber(stock.rsi, 0)}</span>
@@ -1005,8 +1027,8 @@ export function StockDetailPanel({ stock }: StockDetailPanelProps) {
             </div>
           </Card>
 
-          <Card className="p-4">
-            <h4 className="text-sm font-medium text-muted-foreground mb-3 flex items-center gap-2">
+          <Card className="p-3">
+            <h4 className="text-sm font-medium text-muted-foreground mb-2 flex items-center gap-2">
               <Newspaper className="h-4 w-4" />News
             </h4>
             <NewsSection symbol={stock.symbol} />

@@ -1,7 +1,7 @@
 // Hook für Streaming Scanner mit progressivem Loading
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { StockData } from "@/lib/scanner-service";
 
 export interface ScanProgress {
@@ -20,6 +20,9 @@ export interface ScanStats {
   fromCache: number;
   freshlyFetched: number;
   scanTime: string;
+  fromSnapshot?: boolean;
+  backgroundRefresh?: boolean;
+  snapshotAgeSeconds?: number | null;
 }
 
 export interface UseScannerStreamOptions {
@@ -51,6 +54,15 @@ export function useScannerStream(options: UseScannerStreamOptions = {}) {
   const [stats, setStats] = useState<ScanStats | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const retryCountRef = useRef(0);
+  const onStocksReceivedRef = useRef(onStocksReceived);
+  const onCompleteRef = useRef(onComplete);
+  const onErrorRef = useRef(onError);
+
+  useEffect(() => {
+    onStocksReceivedRef.current = onStocksReceived;
+    onCompleteRef.current = onComplete;
+    onErrorRef.current = onError;
+  }, [onStocksReceived, onComplete, onError]);
 
   const startScan = useCallback(async (forceRefresh = false) => {
     // Cancel any existing scan
@@ -66,8 +78,35 @@ export function useScannerStream(options: UseScannerStreamOptions = {}) {
     setProgress({ phase: "init", message: "Scanner startet..." });
 
     // Local accumulator for incoming stocks (avoids duplicates on refresh)
-    const incoming: StockData[] = [];
+    const incomingBySymbol = new Map<string, StockData>();
+    let pendingStockCommit: number | null = null;
     let isRetrying = false;
+
+    const commitStocksNow = () => {
+      if (pendingStockCommit !== null) {
+        window.cancelAnimationFrame(pendingStockCommit);
+        pendingStockCommit = null;
+      }
+      if (incomingBySymbol.size > 0) {
+        setStocks(Array.from(incomingBySymbol.values()));
+      }
+    };
+
+    const queueStocksCommit = () => {
+      if (pendingStockCommit !== null) return;
+      pendingStockCommit = window.requestAnimationFrame(() => {
+        pendingStockCommit = null;
+        setStocks(Array.from(incomingBySymbol.values()));
+      });
+    };
+
+    const appendStocks = (nextStocks: StockData[], source: "cached" | "batch") => {
+      for (const stock of nextStocks) {
+        incomingBySymbol.set(stock.symbol, stock);
+      }
+      queueStocksCommit();
+      onStocksReceivedRef.current?.(nextStocks, source);
+    };
 
     try {
       const url = `/api/scanner/stream?type=${scanType}&batchSize=${batchSize}${forceRefresh ? "&refresh=true" : ""}`;
@@ -132,9 +171,7 @@ export function useScannerStream(options: UseScannerStreamOptions = {}) {
 
               case "cached":
                 if (data.stocks && Array.isArray(data.stocks)) {
-                  incoming.push(...data.stocks);
-                  setStocks([...incoming]);
-                  onStocksReceived?.(data.stocks, "cached");
+                  appendStocks(data.stocks, "cached");
                 }
                 setProgress(prev => ({
                   ...prev,
@@ -145,9 +182,7 @@ export function useScannerStream(options: UseScannerStreamOptions = {}) {
 
               case "batch":
                 if (data.stocks && Array.isArray(data.stocks)) {
-                  incoming.push(...data.stocks);
-                  setStocks([...incoming]);
-                  onStocksReceived?.(data.stocks, "batch");
+                  appendStocks(data.stocks, "batch");
                 }
                 if (data.progress) {
                   setProgress(prev => ({
@@ -162,20 +197,26 @@ export function useScannerStream(options: UseScannerStreamOptions = {}) {
                 break;
 
               case "complete":
+                commitStocksNow();
                 const scanStats: ScanStats = {
                   totalStocks: data.totalStocks || 0,
                   totalScanned: data.totalScanned || 0,
                   fromCache: data.fromCache || 0,
                   freshlyFetched: data.freshlyFetched || 0,
                   scanTime: data.scanTime || new Date().toISOString(),
+                  fromSnapshot: Boolean(data.fromSnapshot),
+                  backgroundRefresh: Boolean(data.backgroundRefresh),
+                  snapshotAgeSeconds: data.snapshotAgeSeconds ?? null,
                 };
                 setStats(scanStats);
                 setProgress({
                   phase: "complete",
-                  message: `Fertig: ${scanStats.totalStocks} Aktien (${scanStats.fromCache} aus Cache)`,
+                  message: scanStats.fromSnapshot
+                    ? `Datenbestand bereit: ${scanStats.totalStocks} Aktien aus Cache${scanStats.backgroundRefresh ? " - Refresh läuft im Hintergrund" : ""}`
+                    : `Fertig: ${scanStats.totalStocks} Aktien (${scanStats.fromCache} aus Cache)`,
                   percent: 100,
                 });
-                onComplete?.(scanStats);
+                onCompleteRef.current?.(scanStats);
                 retryCountRef.current = 0;
                 break;
 
@@ -185,7 +226,7 @@ export function useScannerStream(options: UseScannerStreamOptions = {}) {
                   phase: "error",
                   message: data.message || data.error || "Fehler beim Scannen",
                 });
-                onError?.(data.message || data.error || "Unbekannter Fehler");
+                onErrorRef.current?.(data.message || data.error || "Unbekannter Fehler");
                 break;
             }
           } catch (parseError) {
@@ -215,17 +256,20 @@ export function useScannerStream(options: UseScannerStreamOptions = {}) {
           phase: "error",
           message: String(error),
         });
-        onError?.(String(error));
+        onErrorRef.current?.(String(error));
         retryCountRef.current = 0;
       }
     } finally {
       // Don't reset loading state if we're retrying (recursive call handles it)
       if (!isRetrying) {
+        if (pendingStockCommit !== null) {
+          window.cancelAnimationFrame(pendingStockCommit);
+        }
         setIsLoading(false);
         abortControllerRef.current = null;
       }
     }
-  }, [scanType, batchSize, onStocksReceived, onComplete, onError]);
+  }, [scanType, batchSize]);
 
   const cancelScan = useCallback(() => {
     if (abortControllerRef.current) {

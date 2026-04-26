@@ -1,0 +1,13 @@
+{
+  "userId": "mLQ3PXMAQR",
+  "removedObjectIds": [
+    "9FWlRKauxF",
+    "H8bh1sTAqK"
+  ],
+  "remainingCount": 34,
+  "missingCount": 0,
+  "extraCount": 0,
+  "missing": [],
+  "extra": [],
+  "backupFile": "./output/ib-delete-backup-asts.json"
+}

@@ -113,17 +113,17 @@ export default function BackfillPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[400px]">
+      <div className="flex items-center justify-center min-h-[300px]">
         <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
       </div>
     );
   }
 
   return (
-    <div className="container mx-auto py-6 space-y-6">
+    <div className="container mx-auto py-4 space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Daten Backfill</h1>
+          <h1 className="text-2xl font-bold tracking-tight">Daten Backfill</h1>
           <p className="text-muted-foreground">
             Historische Daten aus offenen Quellen laden (Yahoo, Stooq, News-Feeds)
           </p>
@@ -199,7 +199,7 @@ export default function BackfillPage() {
       </div>
 
       {/* Backfill Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {/* Daily Prices */}
         <Card>
           <CardHeader>

@@ -78,9 +78,11 @@ function toneForPercent(value: number): string {
 export function ScannerSignals({
   onSearch,
   cacheOnly = false,
+  compact = false,
 }: {
   onSearch?: (query: string) => void;
   cacheOnly?: boolean;
+  compact?: boolean;
 }) {
   const [gappers, setGappers] = useState<GappersFeedResponse | null>(null);
   const [alerts, setAlerts] = useState<AlertsFeedResponse | null>(null);
@@ -136,10 +138,14 @@ export function ScannerSignals({
 
   const gappersCacheMiss = gappers?.source === "cache-miss";
   const alertsCacheMiss = alerts?.source === "cache-miss";
+  const earningsLimit = compact ? 2 : 6;
+  const gappersLimit = compact ? 3 : 8;
+  const alertsLimit = compact ? 3 : 10;
 
   const wrap = (content: ReactNode, query?: string, title?: string) => {
     const className = cn(
-      "block rounded-md border p-2 transition-colors",
+      "block rounded-md border transition-colors",
+      compact ? "p-1.5" : "p-2",
       onSearch ? "hover:bg-muted/40 cursor-pointer" : ""
     );
     if (!onSearch || !query) {
@@ -158,24 +164,24 @@ export function ScannerSignals({
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
+      <CardHeader className={compact ? "pb-1 sm:pb-2" : undefined}>
+        <CardTitle className="flex items-center gap-2 text-sm">
           <AlertCircle className="h-4 w-4 text-amber-400" />
           Signale: Earnings, Gappers, Alerts
         </CardTitle>
-        <CardDescription>
+        <CardDescription className={compact ? "hidden sm:block" : undefined}>
           Regelbasiert (ohne KI). Basierend auf Gap, Volumen, Trend/RS und heutigen News-Tags.
         </CardDescription>
       </CardHeader>
-      <CardContent>
+      <CardContent className={compact ? "pt-0" : undefined}>
         {loading && !gappers && !alerts ? (
-          <div className="grid gap-4 md:grid-cols-3">
-            <Skeleton className="h-56 w-full" />
-            <Skeleton className="h-56 w-full" />
-            <Skeleton className="h-56 w-full" />
+          <div className={cn("grid gap-3 md:grid-cols-3", compact && "gap-2")}>
+            <Skeleton className={cn("w-full", compact ? "h-32" : "h-56")} />
+            <Skeleton className={cn("w-full", compact ? "h-32" : "h-56")} />
+            <Skeleton className={cn("w-full", compact ? "h-32" : "h-56")} />
           </div>
         ) : (
-          <div className="grid gap-4 md:grid-cols-3">
+          <div className="grid gap-3 md:grid-cols-3">
             <div className="space-y-2">
               <div className="text-xs text-muted-foreground flex items-center gap-2">
                 <TrendingUp className="h-3.5 w-3.5" />
@@ -195,7 +201,7 @@ export function ScannerSignals({
               ) : gappers.earningsWinners.length === 0 ? (
                 <div className="text-sm text-muted-foreground">Keine Earnings/GUIDANCE-Gapper gefunden.</div>
               ) : (
-                gappers.earningsWinners.slice(0, 6).map((stock) => {
+                gappers.earningsWinners.slice(0, earningsLimit).map((stock) => {
                   const headline = headlineBySymbol.get(stock.symbol);
                   return (
                     <div key={`ew-${stock.symbol}`}>
@@ -226,7 +232,7 @@ export function ScannerSignals({
                         `Filter nach Symbol: ${stock.symbol}`
                       )}
                       {headline?.title && (
-                        <div className="mt-1 text-[11px] text-muted-foreground line-clamp-2">
+                        <div className="mt-1 hidden text-[11px] text-muted-foreground line-clamp-2 sm:block">
                           {headline.title}
                         </div>
                       )}
@@ -236,7 +242,7 @@ export function ScannerSignals({
               )}
             </div>
 
-            <div className="space-y-2">
+            <div className={cn("space-y-2", compact && "hidden sm:block")}>
               <div className="text-xs text-muted-foreground flex items-center gap-2">
                 <TrendingUp className="h-3.5 w-3.5" />
                 Top Gappers
@@ -250,7 +256,7 @@ export function ScannerSignals({
               ) : gappers.topGappers.length === 0 ? (
                 <div className="text-sm text-muted-foreground">Keine Gapper gefunden.</div>
               ) : (
-                gappers.topGappers.slice(0, 8).map((stock) => {
+                gappers.topGappers.slice(0, gappersLimit).map((stock) => {
                   return (
                     <div key={`gap-${stock.symbol}`}>
                       {wrap(
@@ -279,7 +285,7 @@ export function ScannerSignals({
               )}
             </div>
 
-            <div className="space-y-2">
+            <div className={cn("space-y-2", compact && "hidden sm:block")}>
               <div className="text-xs text-muted-foreground flex items-center gap-2">
                 <AlertCircle className="h-3.5 w-3.5" />
                 Alerts (RS / Breakout / Volumen)
@@ -298,7 +304,7 @@ export function ScannerSignals({
               ) : alerts.alerts.length === 0 ? (
                 <div className="text-sm text-muted-foreground">Keine Alerts gefunden.</div>
               ) : (
-                alerts.alerts.slice(0, 10).map((item) => {
+                alerts.alerts.slice(0, alertsLimit).map((item) => {
                   const typeTone =
                     item.type === "Breakout" ? "border-emerald-500/25 text-emerald-200" :
                     item.type === "RS" ? "border-sky-500/25 text-sky-200" :

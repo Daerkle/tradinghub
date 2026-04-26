@@ -82,6 +82,8 @@ export function filterByScanType(stocks: StockData[], scanType: string): StockDa
       return stocks.filter(s => s.momentum3M >= 20).sort((a, b) => b.momentum3M - a.momentum3M);
     case "6m":
       return stocks.filter(s => s.momentum6M >= 30).sort((a, b) => b.momentum6M - a.momentum6M);
+    case "1y":
+      return stocks.filter(s => s.momentum1Y >= 40).sort((a, b) => b.momentum1Y - a.momentum1Y);
     case "setup":
     case "qullamaggie":
       return stocks.filter(s => s.isQullaSetup).sort((a, b) => b.setupScore - a.setupScore);

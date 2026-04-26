@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -30,6 +30,8 @@ import {
 import { translateNewsTag } from "@/lib/news-tags";
 import { ScannerSignals } from "@/components/scanner/scanner-signals";
 import { SectorRotationHeatmap } from "@/components/scanner/sector-rotation-heatmap";
+import { useCurrencyFormatter } from "@/hooks/use-currency-formatter";
+import { readClientJsonCache, writeClientJsonCache } from "@/lib/client-json-cache";
 import {
   XAxis,
   YAxis,
@@ -51,12 +53,8 @@ import {
   Bar,
 } from "recharts";
 
-function formatCurrency(value: number): string {
-  return new Intl.NumberFormat("de-DE", {
-    style: "currency",
-    currency: "USD",
-  }).format(value);
-}
+const DASHBOARD_FEED_CACHE_KEY = "dashboard:catalyst-feed";
+const DASHBOARD_FEED_MAX_AGE_MS = 2 * 60 * 1000;
 
 function formatPercent(value: number): string {
   return `${value.toFixed(1)}%`;
@@ -129,6 +127,7 @@ function formatRelativeTime(timestamp: string): string {
 }
 
 export default function DashboardPage() {
+  const { displayCurrency, formatMoney, convertMoney } = useCurrencyFormatter();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [, setRecentTrades] = useState<TradeData[]>([]);
   const [equityCurve, setEquityCurve] = useState<EquityPoint[]>([]);
@@ -190,15 +189,29 @@ export default function DashboardPage() {
     }
 
     async function loadFeed() {
-      try {
+      const cached = readClientJsonCache<CatalystFeedResponse>(DASHBOARD_FEED_CACHE_KEY, {
+        maxAgeMs: DASHBOARD_FEED_MAX_AGE_MS,
+        allowStale: true,
+      });
+
+      if (cached) {
+        setCatalystFeed(cached.data);
+        setIsFeedLoading(false);
+      } else {
         setIsFeedLoading(true);
+      }
+
+      try {
         const res = await fetch("/api/scanner/catalyst-feed?stocks=12&news=20");
         if (!res.ok) throw new Error(`Feed HTTP ${res.status}`);
         const data = (await res.json()) as CatalystFeedResponse;
-        if (!cancelled) setCatalystFeed(data);
+        if (!cancelled) {
+          setCatalystFeed(data);
+          writeClientJsonCache(DASHBOARD_FEED_CACHE_KEY, data);
+        }
       } catch (err) {
         console.error("Failed to load catalyst feed:", err);
-        if (!cancelled) setCatalystFeed(null);
+        if (!cancelled && !cached) setCatalystFeed(null);
       } finally {
         if (!cancelled) setIsFeedLoading(false);
       }
@@ -212,17 +225,72 @@ export default function DashboardPage() {
     };
   }, []);
 
+  const displayStats = useMemo(
+    () =>
+      stats
+        ? {
+            ...stats,
+            totalPnl: convertMoney(stats.totalPnl, "USD"),
+            avgWin: convertMoney(stats.avgWin, "USD"),
+            avgLoss: convertMoney(stats.avgLoss, "USD"),
+            bestTrade: convertMoney(stats.bestTrade, "USD"),
+            worstTrade: convertMoney(stats.worstTrade, "USD"),
+            expectancy: convertMoney(stats.expectancy, "USD"),
+          }
+        : null,
+    [convertMoney, stats]
+  );
+
+  const displayEquityCurve = useMemo(
+    () =>
+      equityCurve.map((point) => ({
+        ...point,
+        equity: convertMoney(point.equity, "USD"),
+        pnl: convertMoney(point.pnl, "USD"),
+      })),
+    [convertMoney, equityCurve]
+  );
+
+  const displayPerformanceByDay = useMemo(
+    () => performanceByDay.map((entry) => ({ ...entry, pnl: convertMoney(entry.pnl, "USD") })),
+    [convertMoney, performanceByDay]
+  );
+
+  const displayPerformanceBySymbol = useMemo(
+    () =>
+      performanceBySymbol.map((entry) => ({
+        ...entry,
+        pnl: convertMoney(entry.pnl, "USD"),
+        avgPnl: convertMoney(entry.avgPnl, "USD"),
+      })),
+    [convertMoney, performanceBySymbol]
+  );
+
+  const displayCatalystFeed = useMemo(
+    () =>
+      catalystFeed
+        ? {
+            ...catalystFeed,
+            stocks: catalystFeed.stocks.map((stock) => ({
+              ...stock,
+              price: convertMoney(stock.price, "USD"),
+            })),
+          }
+        : null,
+    [catalystFeed, convertMoney]
+  );
+
   if (isLoading) {
     return (
-      <div className="space-y-6 p-6">
+      <div className="space-y-4">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
+          <h1 className="text-xl font-bold tracking-tight sm:text-2xl">Dashboard</h1>
           <p className="text-muted-foreground">
             Deine Trading-Performance auf einen Blick
           </p>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
           {[1, 2, 3, 4].map((i) => (
             <Card key={i} className="animate-pulse">
               <CardHeader className="flex flex-row items-center justify-between pb-2">
@@ -242,12 +310,12 @@ export default function DashboardPage() {
 
   if (error) {
     return (
-      <div className="space-y-6 p-6">
+      <div className="space-y-4">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
+          <h1 className="text-xl font-bold tracking-tight sm:text-2xl">Dashboard</h1>
         </div>
         <Card className="border-destructive/50 bg-destructive/10">
-          <CardContent className="pt-6">
+          <CardContent className="pt-4">
             <p className="text-destructive font-medium">{error}</p>
           </CardContent>
         </Card>
@@ -255,22 +323,22 @@ export default function DashboardPage() {
     );
   }
 
-  const performanceRadarData = stats ? getPerformanceRadarData(stats) : [];
-  const winRateData = stats ? getWinRateData(stats) : [];
+  const performanceRadarData = displayStats ? getPerformanceRadarData(displayStats) : [];
+  const winRateData = displayStats ? getWinRateData(displayStats) : [];
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-500">
+    <div className="space-y-3 animate-in fade-in duration-500">
       <div className="flex flex-col gap-1">
-        <h1 className="text-2xl md:text-3xl font-bold tracking-tight text-foreground">
+        <h1 className="text-xl font-bold tracking-tight text-foreground sm:text-2xl">
           Dashboard
         </h1>
-        <p className="text-muted-foreground">
+        <p className="max-w-2xl text-sm text-muted-foreground">
           Willkommen zurück! Hier ist deine Performance-Übersicht.
         </p>
       </div>
 
       {/* Hero Stats Section */}
-      <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 md:grid-cols-3">
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 md:grid-cols-3">
         {/* Performance Score */}
         <Card className="md:col-span-1 bg-gradient-to-br from-zinc-800/50 via-zinc-900/30 to-background border-zinc-700/30 animate-in slide-in-from-bottom-4 duration-500 delay-100">
           <CardHeader className="pb-2">
@@ -280,14 +348,14 @@ export default function DashboardPage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="flex items-center gap-4">
-              <div className="text-4xl md:text-5xl font-bold text-foreground">{stats?.performanceScore ?? 0}</div>
-              <div className="flex-1 space-y-2">
-                <Progress value={stats?.performanceScore ?? 0} className="h-2 bg-zinc-700" />
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+              <div className="text-lg font-bold text-foreground sm:text-xl">{displayStats?.performanceScore ?? 0}</div>
+              <div className="flex-1 space-y-1.5">
+                <Progress value={displayStats?.performanceScore ?? 0} className="h-1.5 bg-zinc-700" />
                 <p className="text-xs text-muted-foreground font-medium">
-                  {(stats?.performanceScore ?? 0) >= 80 ? "Exzellent" :
-                    (stats?.performanceScore ?? 0) >= 60 ? "Gut" :
-                      (stats?.performanceScore ?? 0) >= 40 ? "Durchschnitt" : "Verbesserung nötig"}
+                  {(displayStats?.performanceScore ?? 0) >= 80 ? "Exzellent" :
+                    (displayStats?.performanceScore ?? 0) >= 60 ? "Gut" :
+                      (displayStats?.performanceScore ?? 0) >= 40 ? "Durchschnitt" : "Verbesserung nötig"}
                 </p>
               </div>
             </div>
@@ -303,17 +371,17 @@ export default function DashboardPage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="flex items-center gap-4">
-              <div className="w-20 h-20 relative">
-                {stats && stats.totalTrades > 0 ? (
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <div className="relative h-14 w-14">
+                {displayStats && displayStats.totalTrades > 0 ? (
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
                       <Pie
                         data={winRateData}
                         cx="50%"
                         cy="50%"
-                        innerRadius={25}
-                        outerRadius={35}
+                        innerRadius={18}
+                        outerRadius={25}
                         paddingAngle={4}
                         dataKey="value"
                         stroke="none"
@@ -326,17 +394,17 @@ export default function DashboardPage() {
                   </ResponsiveContainer>
                 ) : null}
                 <div className="absolute inset-0 flex items-center justify-center text-xs font-bold">
-                  {formatPercent(stats?.winRate ?? 0)}
+                  {formatPercent(displayStats?.winRate ?? 0)}
                 </div>
               </div>
               <div className="flex flex-col gap-1">
                 <div className="flex items-center gap-2 text-sm">
                   <div className="h-2 w-2 rounded-full bg-green-500" />
-                  <span className="text-green-500 font-medium">{Math.round((stats?.winRate ?? 0) / 100 * (stats?.totalTrades ?? 0))} Gewinner</span>
+                  <span className="text-green-500 font-medium">{Math.round((displayStats?.winRate ?? 0) / 100 * (displayStats?.totalTrades ?? 0))} Gewinner</span>
                 </div>
                 <div className="flex items-center gap-2 text-sm">
                   <div className="h-2 w-2 rounded-full bg-red-500" />
-                  <span className="text-red-500 font-medium">{(stats?.totalTrades ?? 0) - Math.round((stats?.winRate ?? 0) / 100 * (stats?.totalTrades ?? 0))} Verlierer</span>
+                  <span className="text-red-500 font-medium">{(displayStats?.totalTrades ?? 0) - Math.round((displayStats?.winRate ?? 0) / 100 * (displayStats?.totalTrades ?? 0))} Verlierer</span>
                 </div>
               </div>
             </div>
@@ -353,13 +421,13 @@ export default function DashboardPage() {
           </CardHeader>
           <CardContent>
             <div className="flex flex-col gap-1">
-              <div className="text-4xl font-bold tracking-tight">
-                {stats?.profitFactor === 999 ? "∞" : (stats?.profitFactor ?? 0).toFixed(2)}
+              <div className="text-lg font-bold tracking-tight sm:text-xl">
+                {displayStats?.profitFactor === 999 ? "∞" : (displayStats?.profitFactor ?? 0).toFixed(2)}
               </div>
               <div className="flex items-center gap-2 text-xs font-medium mt-1">
-                {(stats?.profitFactor ?? 0) >= 1.5 ? (
+                {(displayStats?.profitFactor ?? 0) >= 1.5 ? (
                   <Badge variant="outline" className="bg-green-500/10 text-green-500 border-green-500/20">Profitabel</Badge>
-                ) : (stats?.profitFactor ?? 0) >= 1 ? (
+                ) : (displayStats?.profitFactor ?? 0) >= 1 ? (
                   <Badge variant="outline" className="bg-yellow-500/10 text-yellow-500 border-yellow-500/20">Breakeven</Badge>
                 ) : (
                   <Badge variant="outline" className="bg-red-500/10 text-red-500 border-red-500/20">Verlust</Badge>
@@ -371,15 +439,15 @@ export default function DashboardPage() {
       </div>
 
       {/* KPI Grid */}
-      <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 animate-in slide-in-from-bottom-8 duration-500 delay-500">
+      <div className="grid grid-cols-1 gap-2 animate-in slide-in-from-bottom-8 duration-500 delay-500 sm:grid-cols-2 lg:grid-cols-4">
         <Card className="hover:bg-accent/50 transition-colors">
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">Netto P&L</CardTitle>
             <DollarSign className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className={`text-2xl font-bold ${(stats?.totalPnl ?? 0) >= 0 ? "text-green-400" : "text-red-400"}`}>
-              {formatCurrency(stats?.totalPnl ?? 0)}
+            <div className={`text-lg font-bold sm:text-xl ${(displayStats?.totalPnl ?? 0) >= 0 ? "text-green-400" : "text-red-400"}`}>
+              {formatMoney(displayStats?.totalPnl ?? 0, displayCurrency)}
             </div>
           </CardContent>
         </Card>
@@ -390,9 +458,9 @@ export default function DashboardPage() {
             <BarChart3 className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats?.totalTrades ?? 0}</div>
+            <div className="text-lg font-bold sm:text-xl">{displayStats?.totalTrades ?? 0}</div>
             <p className="text-xs text-muted-foreground mt-1">
-              Ø {formatCurrency(stats?.expectancy ?? 0)} / Trade
+              Ø {formatMoney(displayStats?.expectancy ?? 0, displayCurrency)} / Trade
             </p>
           </CardContent>
         </Card>
@@ -403,8 +471,8 @@ export default function DashboardPage() {
             <Percent className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">
-              {stats?.riskReward === 999 ? "∞" : (stats?.riskReward ?? 0).toFixed(2)}
+            <div className="text-lg font-bold sm:text-xl">
+              {displayStats?.riskReward === 999 ? "∞" : (displayStats?.riskReward ?? 0).toFixed(2)}
             </div>
             <p className="text-xs text-muted-foreground mt-1">Ø R:R Ratio</p>
           </CardContent>
@@ -416,8 +484,8 @@ export default function DashboardPage() {
             <ArrowDownRight className="h-4 w-4 text-red-400" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-red-400">
-              -{formatPercent(stats?.maxDrawdown ?? 0)}
+            <div className="text-lg font-bold text-red-400 sm:text-xl">
+              -{formatPercent(displayStats?.maxDrawdown ?? 0)}
             </div>
             <p className="text-xs text-muted-foreground mt-1">Maximal</p>
           </CardContent>
@@ -430,30 +498,30 @@ export default function DashboardPage() {
           <CardTitle className="flex items-center gap-2 text-sm font-medium">
             <Zap className="h-4 w-4 text-rose-500" />
             Catalyst Feed
-            {catalystFeed && (
+            {displayCatalystFeed && (
               <Badge variant="outline" className="ml-2 text-[10px]">
-                {catalystFeed.source} · {catalystFeed.scannedCount} gescannt
+                {displayCatalystFeed.source} · {displayCatalystFeed.scannedCount} gescannt
               </Badge>
             )}
           </CardTitle>
         </CardHeader>
         <CardContent>
           {isFeedLoading ? (
-            <div className="grid gap-4 md:grid-cols-2">
-              <Skeleton className="h-56 w-full" />
-              <Skeleton className="h-56 w-full" />
+            <div className="grid gap-3 md:grid-cols-2">
+              <Skeleton className="h-36 w-full" />
+              <Skeleton className="h-36 w-full" />
             </div>
-          ) : !catalystFeed ? (
+          ) : !displayCatalystFeed ? (
             <div className="text-sm text-muted-foreground">Feed aktuell nicht verfügbar.</div>
           ) : (
-            <div className="grid gap-4 md:grid-cols-2">
+            <div className="grid gap-3 md:grid-cols-2">
               <div className="space-y-2">
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
                   <Activity className="h-3.5 w-3.5" />
                   Top Catalyst-Stocks
                 </div>
-                {catalystFeed.stocks.slice(0, 8).map((stock) => (
-                  <div key={stock.symbol} className="flex items-center justify-between rounded-md border p-2">
+                {displayCatalystFeed.stocks.slice(0, 6).map((stock) => (
+                  <div key={stock.symbol} className="flex items-center justify-between rounded-md border p-1.5">
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
                         <span className="font-semibold">{stock.symbol}</span>
@@ -469,7 +537,7 @@ export default function DashboardPage() {
                       <p className="text-xs text-muted-foreground truncate">{stock.name}</p>
                     </div>
                     <div className="text-right">
-                      <div className="text-sm font-medium">{formatCurrency(stock.price)}</div>
+                      <div className="text-sm font-medium">{formatMoney(stock.price, displayCurrency)}</div>
                       <div className={`text-xs ${stock.changePercent >= 0 ? "text-green-500" : "text-red-500"}`}>
                         {stock.changePercent >= 0 ? "+" : ""}{stock.changePercent.toFixed(2)}%
                       </div>
@@ -483,9 +551,9 @@ export default function DashboardPage() {
                   <Newspaper className="h-3.5 w-3.5" />
                   Tages-News nach Catalyst
                 </div>
-                {catalystFeed.newsTagCounts && Object.keys(catalystFeed.newsTagCounts).length > 0 && (
+                {displayCatalystFeed.newsTagCounts && Object.keys(displayCatalystFeed.newsTagCounts).length > 0 && (
                   <div className="flex flex-wrap gap-1">
-                    {Object.entries(catalystFeed.newsTagCounts)
+                    {Object.entries(displayCatalystFeed.newsTagCounts)
                       .sort((a, b) => b[1] - a[1])
                       .slice(0, 8)
                       .map(([tag, count]) => (
@@ -499,16 +567,16 @@ export default function DashboardPage() {
                       ))}
                   </div>
                 )}
-                {catalystFeed.news.length === 0 ? (
+                {displayCatalystFeed.news.length === 0 ? (
                   <div className="text-sm text-muted-foreground">Keine News von heute gefunden.</div>
                 ) : (
-                  catalystFeed.news.slice(0, 8).map((item, index) => (
+                  displayCatalystFeed.news.slice(0, 6).map((item, index) => (
                     <a
                       key={`${item.link}-${index}`}
                       href={item.link}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="block rounded-md border p-2 hover:bg-muted/40 transition-colors"
+                      className="block rounded-md border p-1.5 transition-colors hover:bg-muted/40"
                     >
                       <div className="flex items-start justify-between gap-2">
                         <p className="text-sm font-medium line-clamp-2">
@@ -541,29 +609,29 @@ export default function DashboardPage() {
       </Card>
 
       <Card className="animate-in slide-in-from-bottom-8 duration-500 delay-650">
-        <CardHeader>
+        <CardHeader className="pb-1">
           <CardTitle className="flex items-center gap-2 text-sm font-medium">
             <TrendingUp className="h-4 w-4 text-emerald-400" />
             Sektor-Rotation Heatmap
           </CardTitle>
-          <CardDescription>
+          <CardDescription className="hidden sm:block">
             XL*-Sektoren relativ zu SPY (Rotation-Kontext fuer Breakouts und Setups).
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <SectorRotationHeatmap />
+          <SectorRotationHeatmap compact limit={6} />
         </CardContent>
       </Card>
 
-      <ScannerSignals cacheOnly />
+      <ScannerSignals compact cacheOnly />
 
       {/* Main Charts Area */}
-      <Tabs defaultValue="equity" className="space-y-4 animate-in fade-in duration-700 delay-700">
+      <Tabs defaultValue="equity" className="space-y-3 animate-in fade-in duration-700 delay-700">
         <TabsList className="grid h-auto w-full grid-cols-2 gap-1 bg-muted/50 p-1 sm:grid-cols-4">
-          <TabsTrigger value="equity" className="data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm transition-all">Equity</TabsTrigger>
-          <TabsTrigger value="radar" className="data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm transition-all">Radar</TabsTrigger>
-          <TabsTrigger value="weekday" className="data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm transition-all">Wochentage</TabsTrigger>
-          <TabsTrigger value="symbols" className="data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm transition-all">Symbole</TabsTrigger>
+          <TabsTrigger value="equity" className="min-h-8 rounded-md px-2 py-1 text-xs data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm transition-all">Equity</TabsTrigger>
+          <TabsTrigger value="radar" className="min-h-8 rounded-md px-2 py-1 text-xs data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm transition-all">Radar</TabsTrigger>
+          <TabsTrigger value="weekday" className="min-h-8 rounded-md px-2 py-1 text-xs data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm transition-all">Wochentage</TabsTrigger>
+          <TabsTrigger value="symbols" className="min-h-8 rounded-md px-2 py-1 text-xs data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm transition-all">Symbole</TabsTrigger>
         </TabsList>
 
         <TabsContent value="equity" className="mt-4">
@@ -571,10 +639,10 @@ export default function DashboardPage() {
             <CardHeader>
               <CardTitle>Equity Kurve</CardTitle>
             </CardHeader>
-            <CardContent className="h-[350px]">
-              {equityCurve.length > 0 ? (
+            <CardContent className="h-[180px] sm:h-[220px]">
+              {displayEquityCurve.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={equityCurve}>
+                  <AreaChart data={displayEquityCurve}>
                     <defs>
                       <linearGradient id="colorEquity" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="5%" stopColor="oklch(0.6 0.118 184.704)" stopOpacity={0.3} />
@@ -591,14 +659,14 @@ export default function DashboardPage() {
                     />
                     <YAxis
                       tick={{ fill: 'oklch(0.7 0.04 260)', fontSize: 11 }}
-                      tickFormatter={(value) => `$${value}`}
+                      tickFormatter={(value) => formatMoney(value, displayCurrency)}
                       axisLine={false}
                       tickLine={false}
                     />
                     <Tooltip
                       contentStyle={{ backgroundColor: "oklch(0.13 0.025 260)", border: "1px solid oklch(1 0 0 / 0.1)", borderRadius: "8px" }}
                       itemStyle={{ color: "oklch(0.985 0 0)" }}
-                      formatter={(value: number) => [formatCurrency(value), "Equity"]}
+                      formatter={(value: number) => [formatMoney(value, displayCurrency), "Equity"]}
                       labelFormatter={(label) => new Date(label).toLocaleDateString("de-DE")}
                     />
                     <Area
@@ -625,8 +693,8 @@ export default function DashboardPage() {
             <CardHeader>
               <CardTitle>Performance Analysis</CardTitle>
             </CardHeader>
-            <CardContent className="h-[350px]">
-              {stats && stats.totalTrades > 0 ? (
+            <CardContent className="h-[180px] sm:h-[220px]">
+              {displayStats && displayStats.totalTrades > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
                   <RadarChart cx="50%" cy="50%" outerRadius="80%" data={performanceRadarData}>
                     <PolarGrid stroke="oklch(1 0 0 / 0.08)" />
@@ -652,10 +720,10 @@ export default function DashboardPage() {
             <CardHeader>
               <CardTitle>Performance nach Wochentag</CardTitle>
             </CardHeader>
-            <CardContent className="h-[350px]">
-              {performanceByDay.length > 0 ? (
+            <CardContent className="h-[180px] sm:h-[220px]">
+              {displayPerformanceByDay.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={performanceByDay}>
+                  <BarChart data={displayPerformanceByDay}>
                     <CartesianGrid strokeDasharray="3 3" stroke="oklch(1 0 0 / 0.1)" vertical={false} />
                     <XAxis
                       dataKey="dayName"
@@ -665,17 +733,17 @@ export default function DashboardPage() {
                     />
                     <YAxis
                       tick={{ fill: "oklch(0.7 0.04 260)", fontSize: 11 }}
-                      tickFormatter={(value) => `$${value}`}
+                      tickFormatter={(value) => formatMoney(value, displayCurrency)}
                       axisLine={false}
                       tickLine={false}
                     />
                     <Tooltip
                       contentStyle={{ backgroundColor: "oklch(0.13 0.025 260)", border: "1px solid oklch(1 0 0 / 0.1)", borderRadius: "8px" }}
                       itemStyle={{ color: "oklch(0.985 0 0)" }}
-                      formatter={(value: number) => [formatCurrency(value), "P&L"]}
+                      formatter={(value: number) => [formatMoney(value, displayCurrency), "P&L"]}
                     />
                     <Bar dataKey="pnl" radius={[6, 6, 0, 0]}>
-                      {performanceByDay.map((entry, index) => (
+                      {displayPerformanceByDay.map((entry, index) => (
                         <Cell key={`weekday-${index}`} fill={entry.pnl >= 0 ? "oklch(0.6 0.118 184.704)" : "oklch(0.627 0.265 303.9)"} />
                       ))}
                     </Bar>
@@ -693,11 +761,11 @@ export default function DashboardPage() {
             <CardHeader>
               <CardTitle>Top Symbole nach P&L</CardTitle>
             </CardHeader>
-            <CardContent className="h-[350px]">
-              {performanceBySymbol.length > 0 ? (
+            <CardContent className="h-[190px] sm:h-[230px]">
+              {displayPerformanceBySymbol.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart
-                    data={performanceBySymbol.slice(0, 10)}
+                    data={displayPerformanceBySymbol.slice(0, 10)}
                     layout="vertical"
                     margin={{ top: 8, right: 8, left: 8, bottom: 8 }}
                   >
@@ -705,7 +773,7 @@ export default function DashboardPage() {
                     <XAxis
                       type="number"
                       tick={{ fill: "oklch(0.7 0.04 260)", fontSize: 11 }}
-                      tickFormatter={(value) => `$${value}`}
+                      tickFormatter={(value) => formatMoney(value, displayCurrency)}
                       axisLine={false}
                       tickLine={false}
                     />
@@ -720,10 +788,10 @@ export default function DashboardPage() {
                     <Tooltip
                       contentStyle={{ backgroundColor: "oklch(0.13 0.025 260)", border: "1px solid oklch(1 0 0 / 0.1)", borderRadius: "8px" }}
                       itemStyle={{ color: "oklch(0.985 0 0)" }}
-                      formatter={(value: number) => [formatCurrency(value), "P&L"]}
+                      formatter={(value: number) => [formatMoney(value, displayCurrency), "P&L"]}
                     />
                     <Bar dataKey="pnl" radius={[0, 6, 6, 0]}>
-                      {performanceBySymbol.slice(0, 10).map((entry, index) => (
+                      {displayPerformanceBySymbol.slice(0, 10).map((entry, index) => (
                         <Cell key={`symbol-${index}`} fill={entry.pnl >= 0 ? "oklch(0.6 0.118 184.704)" : "oklch(0.627 0.265 303.9)"} />
                       ))}
                     </Bar>

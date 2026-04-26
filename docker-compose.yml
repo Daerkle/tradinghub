@@ -49,8 +49,9 @@ services:
       OPENBB_PROVIDER: ${OPENBB_PROVIDER:-yfinance}
       OPENBB_NEWS_PROVIDER: ${OPENBB_NEWS_PROVIDER:-fmp}
       OPENBB_API_KEY: ${OPENBB_API_KEY:-}
-      OPENBB_TIMEOUT_MS: ${OPENBB_TIMEOUT_MS:-20000}
+      OPENBB_TIMEOUT_MS: ${OPENBB_TIMEOUT_MS:-8000}
       OPENBB_CONCURRENCY: ${OPENBB_CONCURRENCY:-4}
+      OPENBB_SINGLE_QUOTE_FALLBACK_LIMIT: ${OPENBB_SINGLE_QUOTE_FALLBACK_LIMIT:-24}
       OPENBB_MAX_SYMBOLS_PER_SCAN: ${OPENBB_MAX_SYMBOLS_PER_SCAN:-1000}
     depends_on:
       backend:
@@ -70,6 +71,30 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
+
+  app_warmer:
+    image: curlimages/curl:8.16.0
+    container_name: tradinghub_app_warmer
+    depends_on:
+      app:
+        condition: service_healthy
+    command:
+      - sh
+      - -c
+      - |
+        tick=0
+        sleep 20
+        while true; do
+          curl -fsS --max-time 240 -X POST "http://app:3000/api/scanner/background-refresh?scope=core" >/dev/null || true
+          if [ $$tick -gt 0 ] && [ $$(($$tick % 6)) -eq 0 ]; then
+            curl -fsS --max-time 360 -X POST "http://app:3000/api/scanner/background-refresh?scope=full" >/dev/null || true
+          fi
+          tick=$$(($$tick + 1))
+          sleep 600
+        done
+    networks:
+      - tradinghub_net
+    restart: unless-stopped
 
   # Parse Server Backend (TradeNote)
   backend:

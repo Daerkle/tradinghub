@@ -57,8 +57,12 @@ function scoreTone(score: number): { box: string; badge: string } {
 
 export function SectorRotationHeatmap({
   onSelect,
+  compact = false,
+  limit,
 }: {
   onSelect?: (query: string) => void;
+  compact?: boolean;
+  limit?: number;
 }) {
   const [data, setData] = useState<SectorRotationResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -85,7 +89,10 @@ export function SectorRotationHeatmap({
     };
   }, []);
 
-  const rows = useMemo(() => data?.sectors || [], [data]);
+  const rows = useMemo(() => {
+    const allRows = data?.sectors || [];
+    return typeof limit === "number" ? allRows.slice(0, limit) : allRows;
+  }, [data, limit]);
 
   return (
     <div className="space-y-2">
@@ -100,8 +107,8 @@ export function SectorRotationHeatmap({
 
       {loading && !data ? (
         <div className="grid grid-cols-2 gap-2">
-          {Array.from({ length: 8 }).map((_, i) => (
-            <Skeleton key={i} className="h-16 w-full" />
+          {Array.from({ length: compact ? 4 : 8 }).map((_, i) => (
+            <Skeleton key={i} className={cn("w-full", compact ? "h-12" : "h-16")} />
           ))}
         </div>
       ) : rows.length === 0 ? (
@@ -131,7 +138,8 @@ export function SectorRotationHeatmap({
             );
 
             const commonClassName = cn(
-              "w-full text-left rounded-md border p-2 transition-colors",
+              "w-full text-left rounded-md border transition-colors",
+              compact ? "p-1.5" : "p-2",
               tone.box,
               onSelect ? "hover:bg-muted/40 cursor-pointer" : ""
             );

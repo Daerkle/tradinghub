@@ -12,10 +12,10 @@ interface ScannerProgressProps {
 export function ScannerProgress({ progress }: ScannerProgressProps) {
   return (
     <Card>
-      <CardContent className="py-4">
-        <div className="flex flex-col md:flex-row items-center gap-6">
-          <div className="flex items-center gap-3 min-w-0">
-            <Loader2 className="h-5 w-5 animate-spin text-zinc-400" />
+      <CardContent className="py-3">
+        <div className="flex flex-col items-center gap-3 md:flex-row md:gap-4">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <Loader2 className="h-4 w-4 animate-spin text-zinc-400" />
             <div className="flex flex-col">
               <span className="font-medium text-sm">
                 {progress.phase === "idle" && "Bereit"}

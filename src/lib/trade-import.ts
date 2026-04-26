@@ -3,6 +3,7 @@ export type TradeSide = "long" | "short";
 export interface ImportableTrade {
   symbol: string;
   side: TradeSide;
+  currency?: string;
   entryPrice: number;
   exitPrice: number;
   entryTime: Date;
@@ -30,13 +31,70 @@ export interface ParseTradesResult {
   detectedFormat: "generic" | "interactiveBrokers";
 }
 
-interface IBExecution {
+export interface IBExecution {
   symbol: string;
+  underlyingSymbol?: string;
+  assetCategory?: string;
+  currency?: string;
   time: Date;
   signedQuantity: number; // buy=+, sell=-
   price: number;
   commission: number; // positive cost
   multiplier: number; // contract multiplier (e.g. 100 for equity options)
+  openCloseIndicator?: string;
+  code?: string;
+  realizedPnl?: number | null;
+  executionId?: string;
+}
+
+type IBCarryInMode = "warn-and-skip" | "infer-from-realized-pnl";
+type IBExecutionIntent = "open" | "close" | "unspecified";
+
+interface BuildIBTradesOptions {
+  source?: string;
+  carryInMode?: IBCarryInMode;
+}
+
+function tokenizeIBCode(code?: string): string[] {
+  return (code || "")
+    .split(";")
+    .map((token) => token.trim().toUpperCase())
+    .filter(Boolean);
+}
+
+function getIBExecutionIntent(execution: IBExecution): IBExecutionIntent {
+  const indicator = (execution.openCloseIndicator || "").trim().toLowerCase();
+  if (indicator.includes("open")) return "open";
+  if (indicator.includes("close")) return "close";
+
+  const tokens = tokenizeIBCode(execution.code);
+  const hasOpen = tokens.includes("O") || tokens.includes("OPEN");
+  const hasClose = tokens.includes("C") || tokens.includes("CLOSE");
+
+  if (hasOpen && !hasClose) return "open";
+  if (hasClose && !hasOpen) return "close";
+  if (Number.isFinite(execution.realizedPnl ?? Number.NaN) && Math.abs(execution.realizedPnl ?? 0) > 1e-9) {
+    return "close";
+  }
+  return "unspecified";
+}
+
+function buildIBTradeImportHash(
+  trade: Pick<ImportableTrade, "symbol" | "side" | "entryPrice" | "exitPrice" | "entryTime" | "exitTime" | "quantity">,
+  closeExecutionIds: string[],
+  source: string
+): string {
+  const normalizedIds = [...new Set(closeExecutionIds.map((id) => id.trim()).filter(Boolean))];
+  if (normalizedIds.length > 0) {
+    return [
+      "ibkr-close",
+      trade.symbol.toUpperCase().trim(),
+      trade.side,
+      normalizedIds.join(","),
+    ].join("|");
+  }
+
+  return buildTradeImportHash(trade, source);
 }
 
 function stripBom(text: string): string {
@@ -627,6 +685,7 @@ function parseIBKRExecutions(rows: string[][]): { executions: IBExecution[]; war
   const executions: IBExecution[] = [];
   for (const row of dataRows) {
     const symbolRaw = getValue(row, headerIndex, ["symbol", "ticker", "underlyingsymbol"]);
+    const underlyingSymbolRaw = getValue(row, headerIndex, ["underlyingsymbol", "underlying"]);
     const dateTimeRaw = getValue(row, headerIndex, ["datetime", "tradedatetime", "datetimeutc", "executedatetime"]);
     const dateRaw = getValue(row, headerIndex, ["date", "tradedate", "executiondate"]);
     const timeOnlyRaw = getValue(row, headerIndex, ["time", "tradetime", "tradetimeutc", "executiontime"]);
@@ -634,9 +693,14 @@ function parseIBKRExecutions(rows: string[][]): { executions: IBExecution[]; war
     const qtyRaw = getValue(row, headerIndex, ["quantity", "qty", "shares", "filled", "filledquantity"]);
     const priceRaw = getValue(row, headerIndex, ["tprice", "tradeprice", "price", "avgprice", "fillprice"]);
     const commissionRaw = getValue(row, headerIndex, ["commfee", "commission", "fees", "comm", "ibcommission"]);
+    const currencyRaw = getValue(row, headerIndex, ["currency", "fxcurrency", "ccy"]);
     const buySellRaw = getValue(row, headerIndex, ["buysell", "side", "action"]);
     const multiplierRaw = getValue(row, headerIndex, ["multiplier", "contractmultiplier"]);
     const assetClassRaw = getValue(row, headerIndex, ["assetclass", "assetcategory", "sectype", "securitytype"]);
+    const openCloseIndicatorRaw = getValue(row, headerIndex, ["opencloseindicator", "openclose", "openclosecode"]);
+    const codeRaw = getValue(row, headerIndex, ["code", "codes", "tradecode"]);
+    const realizedPnlRaw = getValue(row, headerIndex, ["realizedpl", "realizedpnl", "fifopnlrealized"]);
+    const executionIdRaw = getValue(row, headerIndex, ["tradeid", "executionid", "execid", "ibexecid"]);
 
     const symbol = (symbolRaw || "").trim().toUpperCase();
     if (!symbol) continue;
@@ -671,11 +735,18 @@ function parseIBKRExecutions(rows: string[][]): { executions: IBExecution[]; war
 
     executions.push({
       symbol,
+      underlyingSymbol: (underlyingSymbolRaw || "").trim().toUpperCase() || undefined,
+      assetCategory: assetClass || undefined,
+      currency: (currencyRaw || "").trim().toUpperCase() || "USD",
       time,
       signedQuantity: signedQty,
       price,
       commission,
       multiplier,
+      openCloseIndicator: (openCloseIndicatorRaw || "").trim() || undefined,
+      code: (codeRaw || "").trim() || undefined,
+      realizedPnl: parseIBNumber(realizedPnlRaw),
+      executionId: (executionIdRaw || "").trim() || undefined,
     });
   }
 
@@ -689,9 +760,96 @@ function parseIBKRExecutions(rows: string[][]): { executions: IBExecution[]; war
   return { executions, warnings };
 }
 
-function buildTradesFromIBKRExecutions(executions: IBExecution[]): { trades: ImportableTrade[]; warnings: string[] } {
+function createIBOpenState(
+  symbol: string,
+  execution: IBExecution,
+  signedQuantity: number,
+  initialCommission: number = execution.commission
+): {
+  symbol: string;
+  netQty: number;
+  side: TradeSide;
+  entryTime: Date;
+  entryAvgPrice: number;
+  commission: number;
+  realizedPnl: number;
+  exitNotional: number;
+  exitQty: number;
+  multiplier: number;
+  closeExecutionIds: string[];
+} {
+  return {
+    symbol,
+    netQty: signedQuantity,
+    side: signedQuantity > 0 ? "long" : "short",
+    entryTime: execution.time,
+    entryAvgPrice: execution.price,
+    commission: initialCommission,
+    realizedPnl: 0,
+    exitNotional: 0,
+    exitQty: 0,
+    multiplier: execution.multiplier > 0 ? execution.multiplier : 1,
+    closeExecutionIds: [] as string[],
+  };
+}
+
+function synthesizeCarryInTrade(
+  execution: IBExecution,
+  side: TradeSide,
+  quantity: number,
+  source: string
+): ImportableTrade | null {
+  if (!Number.isFinite(execution.realizedPnl ?? Number.NaN)) {
+    return null;
+  }
+
+  const multiplier = execution.multiplier > 0 ? execution.multiplier : 1;
+  const grossBasis = quantity * multiplier;
+  if (!Number.isFinite(grossBasis) || grossBasis <= 0) {
+    return null;
+  }
+
+  const commission = Math.abs(execution.commission);
+  const pnl = execution.realizedPnl ?? 0;
+  const grossMove = pnl + commission;
+  const priceDelta = grossMove / grossBasis;
+  const entryPrice = side === "long" ? execution.price - priceDelta : execution.price + priceDelta;
+
+  if (!Number.isFinite(entryPrice) || entryPrice <= 0) {
+    return null;
+  }
+
+  const trade: ImportableTrade = {
+    symbol: execution.symbol,
+    side,
+    currency: execution.currency || "USD",
+    entryPrice,
+    exitPrice: execution.price,
+    entryTime: new Date(execution.time.getTime() - 1000),
+    exitTime: execution.time,
+    quantity,
+    pnl,
+    commission,
+    notes: "IB carry-in close: entry before export window, reconstructed from realized PnL.",
+    importSource: source,
+  };
+  trade.importHash = buildIBTradeImportHash(
+    trade,
+    execution.executionId ? [execution.executionId] : [],
+    source
+  );
+
+  return trade;
+}
+
+export function buildTradesFromIBExecutions(
+  executions: IBExecution[],
+  options: BuildIBTradesOptions = {}
+): { trades: ImportableTrade[]; warnings: string[] } {
   const warnings: string[] = [];
   const EPS = 1e-9;
+  const source = options.source || "interactiveBrokers";
+  const carryInMode = options.carryInMode || "warn-and-skip";
 
   type OpenState = {
     symbol: string;
@@ -704,6 +862,7 @@ function buildTradesFromIBKRExecutions(executions: IBExecution[]): { trades: Imp
     exitNotional: number;
     exitQty: number;
     multiplier: number;
+    closeExecutionIds: string[];
   };
 
   const trades: ImportableTrade[] = [];
@@ -716,27 +875,35 @@ function buildTradesFromIBKRExecutions(executions: IBExecution[]): { trades: Imp
     bySymbol.set(exec.symbol, list);
   }
 
-  for (const [symbol, execs] of bySymbol.entries()) {
+  for (const [symbol, execsForSymbol] of bySymbol.entries()) {
+    const execs = [...execsForSymbol].sort((a, b) => a.time.getTime() - b.time.getTime());
     let state: OpenState | null = null;
 
     for (const exec of execs) {
       const signedQty = exec.signedQuantity;
       const qtyAbs = Math.abs(signedQty);
       if (qtyAbs === 0) continue;
+      const intent = getIBExecutionIntent(exec);
+      const closesLong = signedQty < 0;
 
       if (!state) {
-        state = {
-          symbol,
-          netQty: signedQty,
-          side: signedQty > 0 ? "long" : "short",
-          entryTime: exec.time,
-          entryAvgPrice: exec.price,
-          commission: exec.commission,
-          realizedPnl: 0,
-          exitNotional: 0,
-          exitQty: 0,
-          multiplier: exec.multiplier > 0 ? exec.multiplier : 1,
-        };
+        if (intent === "close") {
+          const carryInSide: TradeSide = closesLong ? "long" : "short";
+          if (carryInMode === "infer-from-realized-pnl") {
+            const carryInTrade = synthesizeCarryInTrade(exec, carryInSide, qtyAbs, source);
+            if (carryInTrade) {
+              trades.push(carryInTrade);
+              continue;
+            }
+          }
+
+          warnings.push(
+            `Close-only Ausfuhrung ohne bekannte Einstiegslage uebersprungen: ${symbol} ${signedQty} @ ${exec.price} am ${exec.time.toISOString()}. Wahrscheinlich begann der Export mitten in einer offenen Position.`
+          );
+          continue;
+        }
+
+        state = createIBOpenState(symbol, exec, signedQty);
         continue;
       }
 
@@ -745,6 +912,13 @@ function buildTradesFromIBKRExecutions(executions: IBExecution[]): { trades: Imp
         (state.netQty < 0 && signedQty < 0);
 
       if (sameDirection) {
+        if (intent === "close") {
+          warnings.push(
+            `Close-only Ausfuhrung passt nicht zur offenen ${state.side}-Position bei ${symbol}. Zeile wurde ignoriert (${signedQty} @ ${exec.price}, ${exec.time.toISOString()}).`
+          );
+          continue;
+        }
+
         const oldAbs = Math.abs(state.netQty);
         const newAbs = oldAbs + qtyAbs;
         state.entryAvgPrice =
@@ -753,6 +927,14 @@ function buildTradesFromIBKRExecutions(executions: IBExecution[]): { trades: Imp
             : state.entryAvgPrice;
         state.netQty += signedQty;
         state.commission += exec.commission;
+        continue;
+      }
+
+      if (intent === "open") {
+        warnings.push(
+          `Open-only Ausfuhrung trifft auf offene ${state.side}-Position bei ${symbol}. Die bestehende Restposition wird als ausserhalb des Importfensters behandelt und durch die neue Position ersetzt.`
+        );
+        state = createIBOpenState(symbol, exec, signedQty);
         continue;
       }
 
@@ -785,15 +967,19 @@ function buildTradesFromIBKRExecutions(executions: IBExecution[]): { trades: Imp
       state.exitNotional += exec.price * closeQty;
       state.exitQty += closeQty;
       state.commission += commissionClose;
+      if (exec.executionId) {
+        state.closeExecutionIds.push(exec.executionId);
+      }
 
       if (closesTrade) {
         const exitPrice = state.exitQty > 0 ? state.exitNotional / state.exitQty : exec.price;
         const quantity = state.exitQty;
         const pnlNet = state.realizedPnl - state.commission;
 
-        trades.push({
+        const completedTrade: ImportableTrade = {
           symbol,
           side: state.side,
+          currency: exec.currency || "USD",
           entryPrice: state.entryAvgPrice,
           exitPrice,
           entryTime: state.entryTime,
@@ -801,25 +987,27 @@ function buildTradesFromIBKRExecutions(executions: IBExecution[]): { trades: Imp
           quantity,
           pnl: pnlNet,
           commission: state.commission,
-        });
+          importSource: source,
+        };
+        completedTrade.importHash = buildIBTradeImportHash(
+          completedTrade,
+          state.closeExecutionIds,
+          source
+        );
+        trades.push(completedTrade);
 
         state = null;
 
         // If we flipped in the same execution, open a new trade for the remainder
         if (openQty > EPS) {
-          const newSignedQty = signedQty > 0 ? openQty : -openQty;
-          state = {
-            symbol,
-            netQty: newSignedQty,
-            side: newSignedQty > 0 ? "long" : "short",
-            entryTime: exec.time,
-            entryAvgPrice: exec.price,
-            commission: commissionOpen,
-            realizedPnl: 0,
-            exitNotional: 0,
-            exitQty: 0,
-            multiplier: exec.multiplier > 0 ? exec.multiplier : 1,
-          };
+          if (intent === "close") {
+            warnings.push(
+              `Close-only Ausfuhrung bei ${symbol} ueberschreitet die bekannte Positionsgroesse um ${openQty}. Der ueberhaengende Teil wurde nicht als Gegenposition importiert.`
+            );
+          } else {
+            const newSignedQty = signedQty > 0 ? openQty : -openQty;
+            state = createIBOpenState(symbol, exec, newSignedQty, commissionOpen);
+          }
         }
       } else {
         // Still in position (partial close)
@@ -851,6 +1039,7 @@ function parseGenericTrades(rows: string[][]): TradePreview[] {
 
       const sideRaw = (getValue(row, headerIndex, ["side", "direction"]) || "").trim().toLowerCase();
       const side: TradeSide = (sideRaw === "short" || sideRaw.includes("short") || sideRaw === "sell") ? "short" : "long";
+      const currency = (getValue(row, headerIndex, ["currency", "ccy"]) || "USD").trim().toUpperCase() || "USD";
 
       const entryPrice = parseNumber(getValue(row, headerIndex, ["entryprice", "entry", "open", "price"])) ?? 0;
       const exitPrice = parseNumber(getValue(row, headerIndex, ["exitprice", "exit", "close"])) ?? 0;
@@ -873,6 +1062,7 @@ function parseGenericTrades(rows: string[][]): TradePreview[] {
       const trade: TradePreview = {
         symbol,
         side,
+        currency,
         entryPrice,
         exitPrice,
         entryTime,
@@ -938,7 +1128,10 @@ export function parseTradesFromText(
 
   if (shouldTryIB) {
     const { executions, warnings: execWarnings } = parseIBKRExecutions(rawRows);
-    const { trades, warnings: tradeWarnings } = buildTradesFromIBKRExecutions(executions);
+    const { trades, warnings: tradeWarnings } = buildTradesFromIBExecutions(executions, {
+      source: "interactiveBrokers",
+      carryInMode: "warn-and-skip",
+    });
 
     const previews: TradePreview[] = trades.map((t) => ({
       ...t,

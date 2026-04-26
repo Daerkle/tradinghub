@@ -81,7 +81,7 @@ export default function AddScreenshotPage() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Screenshot hinzufügen</h1>
         <p className="text-muted-foreground">
@@ -89,7 +89,7 @@ export default function AddScreenshotPage() {
         </p>
       </div>
 
-      <div className="grid gap-6 md:grid-cols-2">
+      <div className="grid gap-4 md:grid-cols-2">
         <Card>
           <CardHeader>
             <CardTitle>Bild hochladen</CardTitle>

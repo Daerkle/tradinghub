@@ -1,0 +1,150 @@
+{
+  "userId": "mLQ3PXMAQR",
+  "userEmail": "steffen@gmail.com",
+  "warnings": [
+    "Close-only Ausfuhrung ohne bekannte Einstiegslage uebersprungen: SE -100 @ 129.6 am 2026-01-02T09:58:21.000Z. Wahrscheinlich begann der Export mitten in einer offenen Position.",
+    "Offene Position ignoriert (kein Exit gefunden): ASTS (150)",
+    "Offene Position ignoriert (kein Exit gefunden): EUR.USD (-60898.69)"
+  ],
+  "beforeCount": 23,
+  "createdCount": 13,
+  "created": [
+    {
+      "objectId": "ZW2buOyXIh",
+      "symbol": "RKLB",
+      "side": "long",
+      "entryTime": "2026-01-30T11:27:21.000Z",
+      "exitTime": "2026-04-08T07:32:05.000Z",
+      "quantity": 500,
+      "importHash": "ibkr-close|RKLB|long|1382986650,1382986661"
+    },
+    {
+      "objectId": "YS1tMjWkPX",
+      "symbol": "BE",
+      "side": "long",
+      "entryTime": "2026-04-15T07:31:36.000Z",
+      "exitTime": "2026-04-15T07:32:39.000Z",
+      "quantity": 100,
+      "importHash": "ibkr-close|BE|long|1391187268,1391187527"
+    },
+    {
+      "objectId": "hKdt3WoRKc",
+      "symbol": "RKLB  260410C00090000",
+      "side": "short",
+      "entryTime": "2026-03-13T13:21:02.000Z",
+      "exitTime": "2026-03-23T08:54:00.000Z",
+      "quantity": 3,
+      "importHash": "ibkr-close|RKLB  260410C00090000|short|1364391309"
+    },
+    {
+      "objectId": "WEOuRhZNuF",
+      "symbol": "ASTS  260402C00100000",
+      "side": "short",
+      "entryTime": "2026-03-13T13:24:33.000Z",
+      "exitTime": "2026-03-23T09:01:27.000Z",
+      "quantity": 1,
+      "importHash": "ibkr-close|ASTS  260402C00100000|short|1364420068"
+    },
+    {
+      "objectId": "I4hL2J3mQ4",
+      "symbol": "NBIS",
+      "side": "long",
+      "entryTime": "2026-03-17T06:19:19.000Z",
+      "exitTime": "2026-04-08T03:38:42.000Z",
+      "quantity": 250,
+      "importHash": "ibkr-close|NBIS|long|1382698647"
+    },
+    {
+      "objectId": "KZmCrGn8v4",
+      "symbol": "NBIS  260327P00115000",
+      "side": "short",
+      "entryTime": "2026-03-17T09:47:19.000Z",
+      "exitTime": "2026-03-23T08:54:37.000Z",
+      "quantity": 1,
+      "importHash": "ibkr-close|NBIS  260327P00115000|short|1364393202"
+    },
+    {
+      "objectId": "qkGCQzg1MH",
+      "symbol": "AMZN",
+      "side": "long",
+      "entryTime": "2026-03-27T11:34:48.000Z",
+      "exitTime": "2026-04-01T07:32:34.000Z",
+      "quantity": 10,
+      "importHash": "ibkr-close|AMZN|long|1376143832"
+    },
+    {
+      "objectId": "vclXm4877r",
+      "symbol": "GOOGL 260402C00280000",
+      "side": "short",
+      "entryTime": "2026-03-27T14:43:37.000Z",
+      "exitTime": "2026-03-30T08:49:00.000Z",
+      "quantity": 4,
+      "importHash": "ibkr-close|GOOGL 260402C00280000|short|1372861549"
+    },
+    {
+      "objectId": "nMmti9lGFb",
+      "symbol": "ASTS  260402C00080000",
+      "side": "short",
+      "entryTime": "2026-03-31T08:58:54.000Z",
+      "exitTime": "2026-04-02T13:33:58.000Z",
+      "quantity": 1,
+      "importHash": "ibkr-close|ASTS  260402C00080000|short|1378742646"
+    },
+    {
+      "objectId": "XyoGwokaz9",
+      "symbol": "NBIS  260402C00100000",
+      "side": "short",
+      "entryTime": "2026-03-31T09:00:23.000Z",
+      "exitTime": "2026-04-02T13:21:01.000Z",
+      "quantity": 3,
+      "importHash": "ibkr-close|NBIS  260402C00100000|short|1378723214"
+    },
+    {
+      "objectId": "tPE062HmV9",
+      "symbol": "AAOI",
+      "side": "long",
+      "entryTime": "2026-03-31T11:41:01.000Z",
+      "exitTime": "2026-04-01T07:30:01.000Z",
+      "quantity": 100,
+      "importHash": "ibkr-close|AAOI|long|1376111963"
+    },
+    {
+      "objectId": "Pm8iVMC8p5",
+      "symbol": "NVDA",
+      "side": "long",
+      "entryTime": "2026-04-10T09:35:55.000Z",
+      "exitTime": "2026-04-16T07:15:58.000Z",
+      "quantity": 100,
+      "importHash": "ibkr-close|NVDA|long|1392895942"
+    },
+    {
+      "objectId": "zjfiXIw19K",
+      "symbol": "OKLO",
+      "side": "long",
+      "entryTime": "2026-04-14T07:33:08.000Z",
+      "exitTime": "2026-04-14T07:33:59.000Z",
+      "quantity": 300,
+      "importHash": "ibkr-close|OKLO|long|1389508166,1389509618"
+    }
+  ],
+  "afterCount": 36,
+  "stillMissing": [],
+  "extra": [
+    {
+      "objectId": "9FWlRKauxF",
+      "symbol": "ASTS",
+      "side": "short",
+      "entryTime": "2026-02-18T13:51:56.000Z",
+      "exitTime": "2026-03-05T08:32:48.000Z",
+      "quantity": 50
+    },
+    {
+      "objectId": "H8bh1sTAqK",
+      "symbol": "ASTS",
+      "side": "long",
+      "entryTime": "2026-02-17T10:15:31.000Z",
+      "exitTime": "2026-02-18T13:51:56.000Z",
+      "quantity": 50
+    }
+  ]
+}

@@ -52,11 +52,13 @@ import {
 } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
 import { TradeService, TradeData } from "@/lib/models";
+import { useCurrencyFormatter } from "@/hooks/use-currency-formatter";
 
 type SortField = "date" | "symbol" | "pnl" | "side";
 type SortDirection = "asc" | "desc";
 
 export default function TradesPage() {
+  const { displayCurrency, formatMoney, convertMoney } = useCurrencyFormatter();
   const [trades, setTrades] = useState<TradeData[]>([]);
   const [filteredTrades, setFilteredTrades] = useState<TradeData[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -197,20 +199,20 @@ export default function TradesPage() {
   const paginatedTrades = filteredTrades.slice(startIndex, startIndex + tradesPerPage);
 
   // Stats
-  const totalPnL = filteredTrades.reduce((sum, t) => sum + t.pnl, 0);
+  const totalPnL = filteredTrades.reduce((sum, trade) => sum + convertMoney(trade.pnl, trade.currency), 0);
   const winningTrades = filteredTrades.filter((t) => t.pnl > 0);
   const winRate = filteredTrades.length > 0 ? (winningTrades.length / filteredTrades.length) * 100 : 0;
   const avgPnl = filteredTrades.length > 0 ? totalPnL / filteredTrades.length : 0;
 
   if (error) {
     return (
-      <div className="space-y-6">
+      <div className="space-y-4">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Trades</h1>
-          <p className="text-muted-foreground">Alle deine Trading-Aktivitäten</p>
+          <h1 className="text-xl font-bold tracking-tight sm:text-2xl">Trades</h1>
+          <p className="text-sm text-muted-foreground">Alle deine Trading-Aktivitäten</p>
         </div>
         <Card className="border-destructive">
-          <CardContent className="pt-6">
+          <CardContent className="pt-4">
             <p className="text-destructive">{error}</p>
           </CardContent>
         </Card>
@@ -219,16 +221,16 @@ export default function TradesPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <div>
+    <div className="space-y-4">
+      <div className="max-w-2xl space-y-1">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Trades</h1>
-          <p className="text-muted-foreground">Alle deine Trading-Aktivitäten</p>
+          <h1 className="text-xl font-bold tracking-tight sm:text-2xl">Trades</h1>
+          <p className="text-sm text-muted-foreground">Alle deine Trading-Aktivitäten</p>
         </div>
       </div>
 
       {/* Stats Cards */}
-      <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Gesamt P&L</CardTitle>
@@ -242,8 +244,8 @@ export default function TradesPage() {
             {isLoading ? (
               <Skeleton className="h-8 w-24" />
             ) : (
-              <div className={`text-2xl font-bold ${totalPnL >= 0 ? "text-green-500" : "text-red-500"}`}>
-                {totalPnL >= 0 ? "+" : ""}${totalPnL.toFixed(2)}
+              <div className={`text-xl font-bold ${totalPnL >= 0 ? "text-green-500" : "text-red-500"}`}>
+                {formatMoney(totalPnL, displayCurrency, { signDisplay: "always" })}
               </div>
             )}
           </CardContent>
@@ -256,7 +258,7 @@ export default function TradesPage() {
             {isLoading ? (
               <Skeleton className="h-8 w-12" />
             ) : (
-              <div className="text-2xl font-bold">{filteredTrades.length}</div>
+              <div className="text-xl font-bold">{filteredTrades.length}</div>
             )}
           </CardContent>
         </Card>
@@ -268,7 +270,7 @@ export default function TradesPage() {
             {isLoading ? (
               <Skeleton className="h-8 w-16" />
             ) : (
-              <div className="text-2xl font-bold">{winRate.toFixed(1)}%</div>
+              <div className="text-xl font-bold">{winRate.toFixed(1)}%</div>
             )}
           </CardContent>
         </Card>
@@ -280,8 +282,8 @@ export default function TradesPage() {
             {isLoading ? (
               <Skeleton className="h-8 w-20" />
             ) : (
-              <div className={`text-2xl font-bold ${avgPnl >= 0 ? "text-green-500" : "text-red-500"}`}>
-                {avgPnl >= 0 ? "+" : ""}${avgPnl.toFixed(2)}
+              <div className={`text-xl font-bold ${avgPnl >= 0 ? "text-green-500" : "text-red-500"}`}>
+                {formatMoney(avgPnl, displayCurrency, { signDisplay: "always" })}
               </div>
             )}
           </CardContent>
@@ -290,13 +292,13 @@ export default function TradesPage() {
 
       {/* Filters */}
       <Card>
-        <CardHeader>
-          <CardTitle className="text-lg flex items-center gap-2">
+        <CardHeader className="gap-1">
+          <CardTitle className="flex items-center gap-2 text-sm">
             <Filter className="h-4 w-4" /> Filter
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="flex flex-col gap-4 md:flex-row md:flex-wrap">
+          <div className="grid gap-3 md:flex md:flex-row md:flex-wrap">
             <div className="flex-1 min-w-0">
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -345,136 +347,212 @@ export default function TradesPage() {
           {isLoading ? (
             <div className="space-y-2">
               {[1, 2, 3, 4, 5].map((i) => (
-                <Skeleton key={i} className="h-12 w-full" />
+                <Skeleton key={i} className="h-9 w-full" />
               ))}
             </div>
           ) : filteredTrades.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">
+            <div className="text-center py-6 text-muted-foreground">
               Keine Trades gefunden
             </div>
           ) : (
             <>
-              <div className="overflow-x-auto rounded-md border">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead
-                        className="cursor-pointer hover:bg-muted/50"
-                        onClick={() => handleSort("date")}
-                      >
-                        <div className="flex items-center gap-1">
-                          Datum
-                          <ArrowUpDown className="h-3 w-3" />
-                        </div>
-                      </TableHead>
-                      <TableHead
-                        className="cursor-pointer hover:bg-muted/50"
-                        onClick={() => handleSort("symbol")}
-                      >
-                        <div className="flex items-center gap-1">
-                          Symbol
-                          <ArrowUpDown className="h-3 w-3" />
-                        </div>
-                      </TableHead>
-                      <TableHead
-                        className="cursor-pointer hover:bg-muted/50"
-                        onClick={() => handleSort("side")}
-                      >
-                        <div className="flex items-center gap-1">
-                          Seite
-                          <ArrowUpDown className="h-3 w-3" />
-                        </div>
-                      </TableHead>
-                      <TableHead>Einstieg</TableHead>
-                      <TableHead>Ausstieg</TableHead>
-                      <TableHead>Dauer</TableHead>
-                      <TableHead>Setup</TableHead>
-                      <TableHead
-                        className="text-right cursor-pointer hover:bg-muted/50"
-                        onClick={() => handleSort("pnl")}
-                      >
-                        <div className="flex items-center justify-end gap-1">
-                          P&L
-                          <ArrowUpDown className="h-3 w-3" />
-                        </div>
-                      </TableHead>
-                      <TableHead className="w-[100px]">Aktionen</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {paginatedTrades.map((trade) => (
-                      <TableRow key={trade.id} className="group">
-                        <TableCell>
-                          <div className="flex flex-col">
-                            <span className="font-medium">{formatDate(trade.exitTime)}</span>
-                            <span className="text-xs text-muted-foreground">
-                              {formatTime(trade.entryTime)} - {formatTime(trade.exitTime)}
-                            </span>
-                          </div>
-                        </TableCell>
-                        <TableCell className="font-medium">{trade.symbol}</TableCell>
-                        <TableCell>
+              <div className="grid gap-2 md:hidden">
+                {paginatedTrades.map((trade) => (
+                  <div key={trade.id} className="rounded-md border border-border/70 bg-card/50 p-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-sm font-semibold">{trade.symbol}</span>
                           <Badge variant={trade.side === "long" ? "default" : "secondary"}>
                             {trade.side.toUpperCase()}
                           </Badge>
-                        </TableCell>
-                        <TableCell>${trade.entryPrice.toFixed(2)}</TableCell>
-                        <TableCell>${trade.exitPrice.toFixed(2)}</TableCell>
-                        <TableCell className="text-muted-foreground">
-                          {formatDuration(trade.entryTime, trade.exitTime)}
-                        </TableCell>
-                        <TableCell>
-                          {trade.setup ? (
-                            <Badge variant="outline">{trade.setup}</Badge>
-                          ) : (
-                            <span className="text-muted-foreground">-</span>
-                          )}
-                        </TableCell>
-                        <TableCell
-                          className={`text-right font-medium ${
-                            trade.pnl >= 0 ? "text-green-500" : "text-red-500"
-                          }`}
+                          {trade.setup ? <Badge variant="outline">{trade.setup}</Badge> : null}
+                        </div>
+                        <div className="mt-1 text-xs text-muted-foreground">
+                          {formatDate(trade.exitTime)} · {formatTime(trade.entryTime)} - {formatTime(trade.exitTime)}
+                        </div>
+                        <div className="mt-0.5 text-xs text-muted-foreground">
+                          Dauer {formatDuration(trade.entryTime, trade.exitTime)}
+                        </div>
+                      </div>
+                      <div className={`text-right text-sm font-semibold ${trade.pnl >= 0 ? "text-green-500" : "text-red-500"}`}>
+                        {trade.pnl >= 0 ? "+" : ""}
+                        {formatMoney(trade.pnl, trade.currency)}
+                      </div>
+                    </div>
+
+                    <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                      <div className="rounded-md border border-border/60 bg-background/40 px-2 py-1.5">
+                        <div className="text-xs uppercase tracking-wide text-muted-foreground">Einstieg</div>
+                        <div className="mt-1 font-medium">{formatMoney(trade.entryPrice, trade.currency)}</div>
+                      </div>
+                      <div className="rounded-md border border-border/60 bg-background/40 px-2 py-1.5">
+                        <div className="text-xs uppercase tracking-wide text-muted-foreground">Ausstieg</div>
+                        <div className="mt-1 font-medium">{formatMoney(trade.exitPrice, trade.currency)}</div>
+                      </div>
+                    </div>
+
+                    <div className="mt-3 flex items-center justify-end gap-2">
+                      <Link href={`/trades/${trade.id}`}>
+                        <Button variant="outline" size="sm" className="gap-2">
+                          <Eye className="h-4 w-4" />
+                          Öffnen
+                        </Button>
+                      </Link>
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <Button variant="ghost" size="icon" className="h-9 w-9 text-destructive">
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>Trade löschen?</AlertDialogTitle>
+                            <AlertDialogDescription>
+                              Dieser Trade wird unwiderruflich gelöscht. Diese Aktion kann nicht
+                              rückgängig gemacht werden.
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>Abbrechen</AlertDialogCancel>
+                            <AlertDialogAction
+                              onClick={() => handleDelete(trade.id)}
+                              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                            >
+                              Löschen
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="hidden md:block">
+                <div className="overflow-x-auto rounded-md border">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead
+                          className="cursor-pointer hover:bg-muted/50"
+                          onClick={() => handleSort("date")}
                         >
-                          {trade.pnl >= 0 ? "+" : ""}${trade.pnl.toFixed(2)}
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
-                            <Link href={`/trades/${trade.id}`}>
-                              <Button variant="ghost" size="icon" className="h-8 w-8">
-                                <Eye className="h-4 w-4" />
-                              </Button>
-                            </Link>
-                            <AlertDialog>
-                              <AlertDialogTrigger asChild>
-                                <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive">
-                                  <Trash2 className="h-4 w-4" />
-                                </Button>
-                              </AlertDialogTrigger>
-                              <AlertDialogContent>
-                                <AlertDialogHeader>
-                                  <AlertDialogTitle>Trade löschen?</AlertDialogTitle>
-                                  <AlertDialogDescription>
-                                    Dieser Trade wird unwiderruflich gelöscht. Diese Aktion kann nicht
-                                    rückgängig gemacht werden.
-                                  </AlertDialogDescription>
-                                </AlertDialogHeader>
-                                <AlertDialogFooter>
-                                  <AlertDialogCancel>Abbrechen</AlertDialogCancel>
-                                  <AlertDialogAction
-                                    onClick={() => handleDelete(trade.id)}
-                                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                                  >
-                                    Löschen
-                                  </AlertDialogAction>
-                                </AlertDialogFooter>
-                              </AlertDialogContent>
-                            </AlertDialog>
+                          <div className="flex items-center gap-1">
+                            Datum
+                            <ArrowUpDown className="h-3 w-3" />
                           </div>
-                        </TableCell>
+                        </TableHead>
+                        <TableHead
+                          className="cursor-pointer hover:bg-muted/50"
+                          onClick={() => handleSort("symbol")}
+                        >
+                          <div className="flex items-center gap-1">
+                            Symbol
+                            <ArrowUpDown className="h-3 w-3" />
+                          </div>
+                        </TableHead>
+                        <TableHead
+                          className="cursor-pointer hover:bg-muted/50"
+                          onClick={() => handleSort("side")}
+                        >
+                          <div className="flex items-center gap-1">
+                            Seite
+                            <ArrowUpDown className="h-3 w-3" />
+                          </div>
+                        </TableHead>
+                        <TableHead>Einstieg</TableHead>
+                        <TableHead>Ausstieg</TableHead>
+                        <TableHead>Dauer</TableHead>
+                        <TableHead>Setup</TableHead>
+                        <TableHead
+                          className="text-right cursor-pointer hover:bg-muted/50"
+                          onClick={() => handleSort("pnl")}
+                        >
+                          <div className="flex items-center justify-end gap-1">
+                            P&L
+                            <ArrowUpDown className="h-3 w-3" />
+                          </div>
+                        </TableHead>
+                        <TableHead className="w-[100px]">Aktionen</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                    </TableHeader>
+                    <TableBody>
+                      {paginatedTrades.map((trade) => (
+                        <TableRow key={trade.id} className="group">
+                          <TableCell>
+                            <div className="flex flex-col">
+                              <span className="font-medium">{formatDate(trade.exitTime)}</span>
+                              <span className="text-xs text-muted-foreground">
+                                {formatTime(trade.entryTime)} - {formatTime(trade.exitTime)}
+                              </span>
+                            </div>
+                          </TableCell>
+                          <TableCell className="font-medium">{trade.symbol}</TableCell>
+                          <TableCell>
+                            <Badge variant={trade.side === "long" ? "default" : "secondary"}>
+                              {trade.side.toUpperCase()}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>{formatMoney(trade.entryPrice, trade.currency)}</TableCell>
+                          <TableCell>{formatMoney(trade.exitPrice, trade.currency)}</TableCell>
+                          <TableCell className="text-muted-foreground">
+                            {formatDuration(trade.entryTime, trade.exitTime)}
+                          </TableCell>
+                          <TableCell>
+                            {trade.setup ? (
+                              <Badge variant="outline">{trade.setup}</Badge>
+                            ) : (
+                              <span className="text-muted-foreground">-</span>
+                            )}
+                          </TableCell>
+                          <TableCell
+                            className={`text-right font-medium ${
+                              trade.pnl >= 0 ? "text-green-500" : "text-red-500"
+                            }`}
+                          >
+                            {trade.pnl >= 0 ? "+" : ""}
+                            {formatMoney(trade.pnl, trade.currency)}
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex items-center gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
+                              <Link href={`/trades/${trade.id}`}>
+                                <Button variant="ghost" size="icon" className="h-8 w-8">
+                                  <Eye className="h-4 w-4" />
+                                </Button>
+                              </Link>
+                              <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                  <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive">
+                                    <Trash2 className="h-4 w-4" />
+                                  </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent>
+                                  <AlertDialogHeader>
+                                    <AlertDialogTitle>Trade löschen?</AlertDialogTitle>
+                                    <AlertDialogDescription>
+                                      Dieser Trade wird unwiderruflich gelöscht. Diese Aktion kann nicht
+                                      rückgängig gemacht werden.
+                                    </AlertDialogDescription>
+                                  </AlertDialogHeader>
+                                  <AlertDialogFooter>
+                                    <AlertDialogCancel>Abbrechen</AlertDialogCancel>
+                                    <AlertDialogAction
+                                      onClick={() => handleDelete(trade.id)}
+                                      className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                    >
+                                      Löschen
+                                    </AlertDialogAction>
+                                  </AlertDialogFooter>
+                                </AlertDialogContent>
+                              </AlertDialog>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
               </div>
 
               {/* Pagination */}
@@ -483,7 +561,7 @@ export default function TradesPage() {
                   <p className="text-sm text-muted-foreground">
                     Zeige {startIndex + 1}-{Math.min(startIndex + tradesPerPage, filteredTrades.length)} von {filteredTrades.length} Trades
                   </p>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center justify-between gap-2 sm:justify-start">
                     <Button
                       variant="outline"
                       size="sm"

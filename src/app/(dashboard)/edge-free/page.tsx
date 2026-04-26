@@ -22,6 +22,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatMarketCap, formatNumber, formatVolume } from "@/components/scanner/metric-tooltip";
+import { readClientJsonCache, writeClientJsonCache } from "@/lib/client-json-cache";
 import type { CandleData, NewsItem, StockData } from "@/types/scanner";
 
 type MoversMode = "gainers" | "losers" | "volume" | "earnings";
@@ -33,6 +34,9 @@ const MODE_LABELS: Record<MoversMode, string> = {
   volume: "Volumen",
   earnings: "Earnings",
 };
+
+const EDGE_DETAIL_MAX_AGE_MS = 5 * 60 * 1000;
+const EDGE_CHART_MAX_AGE_MS = 30 * 60 * 1000;
 
 function signedPercent(value: number): string {
   return `${value >= 0 ? "+" : ""}${formatNumber(value)}%`;
@@ -133,28 +137,59 @@ export default function EdgeFreePage() {
     let cancelled = false;
 
     async function loadDetails() {
-      setDetailLoading(true);
+      const cacheKey = `edge-free:detail:${selectedSymbol}`;
+      const cached = readClientJsonCache<DetailStock>(cacheKey, {
+        maxAgeMs: EDGE_DETAIL_MAX_AGE_MS,
+        allowStale: true,
+      });
+
+      if (cached) {
+        setSelectedStock(cached.data);
+        setDetailLoading(false);
+      } else {
+        setDetailLoading(true);
+      }
+
       try {
         const response = await fetch(`/api/scanner/${encodeURIComponent(selectedSymbol)}`);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const data = (await response.json()) as DetailStock;
-        if (!cancelled) setSelectedStock(data);
+        if (!cancelled) {
+          setSelectedStock(data);
+          writeClientJsonCache(cacheKey, data);
+        }
       } catch (error) {
-        if (!cancelled) setDetailError(`Detaildaten nicht verfügbar (${String(error)})`);
+        if (!cancelled && !cached) setDetailError(`Detaildaten nicht verfügbar (${String(error)})`);
       } finally {
         if (!cancelled) setDetailLoading(false);
       }
     }
 
     async function loadChart() {
-      setChartLoading(true);
+      const cacheKey = `edge-free:chart:${selectedSymbol}`;
+      const cached = readClientJsonCache<CandleData[]>(cacheKey, {
+        maxAgeMs: EDGE_CHART_MAX_AGE_MS,
+        allowStale: true,
+      });
+
+      if (cached) {
+        setChartData(cached.data);
+        setChartLoading(false);
+      } else {
+        setChartLoading(true);
+      }
+
       try {
         const response = await fetch(`/api/scanner/chart/${encodeURIComponent(selectedSymbol)}`);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const data = (await response.json()) as { chartData?: CandleData[] };
-        if (!cancelled) setChartData(data.chartData || []);
+        if (!cancelled) {
+          const nextChartData = data.chartData || [];
+          setChartData(nextChartData);
+          writeClientJsonCache(cacheKey, nextChartData);
+        }
       } catch {
-        if (!cancelled) setChartData([]);
+        if (!cancelled && !cached) setChartData([]);
       } finally {
         if (!cancelled) setChartLoading(false);
       }
@@ -196,7 +231,7 @@ export default function EdgeFreePage() {
     <div className="space-y-4">
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-bold">Edge Free</h1>
+          <h1 className="text-xl sm:text-2xl font-bold">Edge Free</h1>
           <p className="text-muted-foreground mt-1">
             Kostenfreie Movers-Ansicht mit Scanner-Cache, Symbol-Detail, Chart und News.
           </p>
@@ -278,7 +313,7 @@ export default function EdgeFreePage() {
             </div>
           </CardHeader>
           <CardContent className="p-0">
-            <div className="max-h-[calc(100vh-370px)] min-h-[420px] overflow-auto">
+            <div className="max-h-[calc(100vh-370px)] min-h-[300px] overflow-auto">
               <table className="w-full text-sm">
                 <thead className="sticky top-0 bg-card z-10 border-y">
                   <tr className="text-xs text-muted-foreground">
@@ -418,17 +453,17 @@ export default function EdgeFreePage() {
             <CardContent>
               {!activeStock && <div className="text-sm text-muted-foreground">Kein Symbol ausgewählt.</div>}
               {activeStock && chartLoading && (
-                <div className="h-[360px]">
+                <div className="h-[300px]">
                   <Skeleton className="h-full w-full" />
                 </div>
               )}
               {activeStock && !chartLoading && chartData.length > 0 && (
-                <div className="h-[360px]">
+                <div className="h-[300px]">
                   <StockChart data={chartData} symbol={activeStock.symbol} height={360} />
                 </div>
               )}
               {activeStock && !chartLoading && chartData.length === 0 && (
-                <div className="h-[360px] overflow-hidden rounded-md border bg-black">
+                <div className="h-[300px] overflow-hidden rounded-md border bg-black">
                   <iframe
                     title={`TradingView ${activeStock.symbol}`}
                     src={tradingViewSrc}

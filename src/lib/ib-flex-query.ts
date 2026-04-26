@@ -32,6 +32,9 @@ export interface FlexQueryTrade {
   strike?: number;
   expiry?: string;
   description?: string;
+  code?: string;
+  openCloseIndicator?: string;
+  executionId?: string;
 }
 
 export interface FlexQueryResult {
@@ -173,9 +176,14 @@ export function parseFlexQueryXML(xml: string): FlexQueryResult {
 
   while ((match = tradeRegex.exec(xml)) !== null) {
     const el = match[0];
-    const attr = (name: string): string => {
-      const m = el.match(new RegExp(`${name}="([^"]*)"`));
-      return m?.[1] ?? "";
+    const attr = (...names: string[]): string => {
+      for (const name of names) {
+        const m = el.match(new RegExp(`${name}="([^"]*)"`, "i"));
+        if (m?.[1] !== undefined) {
+          return m[1];
+        }
+      }
+      return "";
     };
 
     const assetCategory = attr("assetCategory");
@@ -183,6 +191,7 @@ export function parseFlexQueryXML(xml: string): FlexQueryResult {
     if (assetCategory !== "STK" && assetCategory !== "OPT") continue;
 
     const quantityRaw = parseFloat(attr("quantity"));
+    if (!Number.isFinite(quantityRaw) || quantityRaw === 0) continue;
     const multiplierRaw =
       parseFloat(attr("multiplier")) ||
       parseFloat(attr("contractMultiplier")) ||
@@ -195,6 +204,9 @@ export function parseFlexQueryXML(xml: string): FlexQueryResult {
           : 1;
     const buySell = attr("buySell");
 
+    const commissionRaw = parseFloat(attr("ibCommission", "commission"));
+    const realizedRaw = parseFloat(attr("fifoPnlRealized", "realizedPnl", "realizedPL"));
+
     trades.push({
       symbol: attr("symbol"),
       underlyingSymbol: attr("underlyingSymbol") || undefined,
@@ -205,13 +217,16 @@ export function parseFlexQueryXML(xml: string): FlexQueryResult {
       multiplier,
       tradePrice: parseFloat(attr("tradePrice")) || 0,
       proceeds: parseFloat(attr("proceeds")) || 0,
-      commission: parseFloat(attr("ibCommission")) || parseFloat(attr("commission")) || 0,
-      realizedPL: parseFloat(attr("fifoPnlRealized")) || parseFloat(attr("realizedPnl")) || 0,
+      commission: Number.isFinite(commissionRaw) ? commissionRaw : 0,
+      realizedPL: Number.isFinite(realizedRaw) ? realizedRaw : 0,
       buySell,
       putCall: attr("putCall") || undefined,
       strike: parseFloat(attr("strike")) || undefined,
       expiry: attr("expiry") || undefined,
       description: attr("description") || undefined,
+      code: attr("code", "notesCode", "notesCodes") || undefined,
+      openCloseIndicator: attr("openCloseIndicator", "openClose") || undefined,
+      executionId: attr("tradeID", "tradeId", "executionID", "executionId", "ibExecId") || undefined,
     });
   }
 

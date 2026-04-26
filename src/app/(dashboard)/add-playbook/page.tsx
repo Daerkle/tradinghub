@@ -77,7 +77,7 @@ export default function AddPlaybookPage() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Playbook-Eintrag hinzufügen</h1>
         <p className="text-muted-foreground">
@@ -85,7 +85,7 @@ export default function AddPlaybookPage() {
         </p>
       </div>
 
-      <div className="grid gap-6">
+      <div className="grid gap-4">
         <Card>
           <CardHeader>
             <CardTitle>Setup-Übersicht</CardTitle>
@@ -141,7 +141,7 @@ export default function AddPlaybookPage() {
           </CardContent>
         </Card>
 
-        <div className="grid gap-6 md:grid-cols-2">
+        <div className="grid gap-4 md:grid-cols-2">
           <Card>
             <CardHeader>
               <CardTitle>Einstiegsregeln</CardTitle>

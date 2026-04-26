@@ -80,9 +80,14 @@ export const METRIC_TOOLTIPS: Record<string, { title: string; description: strin
     description: "Kursperformance der letzten 126 Handelstage (ca. 6 Monate). Zeigt langfristige Trendstarke.",
     good: "\u226530% zeigt starkes langfristiges Momentum",
   },
+  momentum1Y: {
+    title: "1Y Momentum",
+    description: "Kursperformance der letzten 252 Handelstage (ca. 1 Jahr). Hilft zu sehen, ob der Leader auch im grossen Trend stark ist.",
+    good: "\u226540% zeigt sehr starke 12M-Performance",
+  },
   rsRating: {
     title: "RS Rating (Relative Strength)",
-    description: "Vergleicht die Performance der Aktie mit dem S&P 500 uber 1M, 3M und 6M Zeitraume. Gewichtung: 1M=40%, 3M=35%, 6M=25%. Skala 0-99.",
+    description: "IBD-ahnliche RS-Bewertung als 1-99-Perzentil gegen das gesamte Aktienuniversum. Basis ist die 12M-Performance, wobei die juengsten 3 Monate hoeher gewichtet werden als die vorherigen 9 Monate.",
     good: "\u226580 = Top-Performer, \u226590 = Elite-Aktie",
   },
   setupScore: {

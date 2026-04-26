@@ -4,9 +4,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   getCacheStats,
-  swrCacheSet,
-  getStockWithSWR,
+  cacheScannerResults,
+  cacheSeededScannerResults,
+  cacheStocksWithSWR,
+  getCachedScannerResults,
+  getCachedSeededScannerResults,
+  getStocksWithSWRBatch,
 } from "@/lib/redis-cache";
+import { refreshBackgroundCaches, type BackgroundRefreshScope } from "@/lib/background-refresh";
 import { streamRateLimit } from "@/lib/rate-limiter";
 import {
   fetchStockData,
@@ -19,18 +24,22 @@ import {
   fetchFinvizDataWithCache,
   getStockSymbols,
   getSPYPerformance,
+  type ScanResult,
   type StockData,
 } from "@/lib/scanner-service";
 import { filterByScanType } from "@/lib/scanner-filters";
 import type { FinvizStockData } from "@/lib/finviz-service";
 
-// Per-Stock Cache Key
-const STOCK_CACHE_PREFIX = "scanner:stock:";
 const STOCK_CACHE_TTL = 24 * 60 * 60; // 1 Tag per Stock (24 Stunden)
 const DEFAULT_SYMBOL_LIMIT: number | null = null; // no default limit
 const MAX_SYMBOL_LIMIT = 5000;
 const MAX_STREAM_DURATION_MS = 20 * 60 * 1000; // allow full-universe scans by default
 const MAX_FINVIZ_ENRICH_PER_BATCH = 8;
+const SNAPSHOT_CHUNK_SIZE = 80;
+const SNAPSHOT_REFRESH_AFTER_MS = 5 * 60 * 1000;
+const SNAPSHOT_SEEDED_LIMIT = 800;
+
+let snapshotRefreshInFlight: Promise<unknown> | null = null;
 
 function parseSymbolLimit(raw: string | null): number | null {
   if (!raw) return DEFAULT_SYMBOL_LIMIT;
@@ -66,23 +75,84 @@ function selectFinvizSymbolsForBatch(stocks: StockData[]): string[] {
   return prioritized.map((stock) => stock.symbol);
 }
 
-// Get cached stock data with SWR metadata
-async function getCachedStock(symbol: string): Promise<{
-  data: StockData | null;
-  needsRevalidation: boolean;
-  cachedAt: number | null;
-}> {
-  const result = await getStockWithSWR<StockData>(symbol);
+function getScanTimeMs(scanTime: ScanResult["scanTime"] | string | number | null | undefined): number {
+  if (!scanTime) return 0;
+  const date = scanTime instanceof Date ? scanTime : new Date(scanTime);
+  const time = date.getTime();
+  return Number.isFinite(time) ? time : 0;
+}
+
+function normalizeCachedStock(stock: StockData): StockData {
+  return applyCatalystMetrics({
+    ...stock,
+    catalystScore: stock.catalystScore ?? 0,
+    catalystSignals: Array.isArray(stock.catalystSignals) ? stock.catalystSignals : [],
+  });
+}
+
+function hasNonZeroPerformance(value: unknown): boolean {
+  return typeof value === "number" && Number.isFinite(value) && value !== 0;
+}
+
+function hasSnapshotPerformanceData(result: ScanResult): boolean {
+  return result.stocks.some((stock) =>
+    [
+      stock.momentum1M,
+      stock.momentum3M,
+      stock.momentum6M,
+      stock.momentum1Y,
+    ].some(hasNonZeroPerformance)
+  );
+}
+
+async function getBestCachedSnapshot(): Promise<{
+  result: ScanResult;
+  source: "full" | "seeded";
+  ageMs: number;
+} | null> {
+  const [full, seeded] = await Promise.all([
+    getCachedScannerResults<ScanResult>(),
+    getCachedSeededScannerResults<ScanResult>(),
+  ]);
+
+  const candidates = [
+    full?.stocks?.length ? { result: full, source: "full" as const } : null,
+    seeded?.stocks?.length ? { result: seeded, source: "seeded" as const } : null,
+  ].filter((candidate): candidate is { result: ScanResult; source: "full" | "seeded" } => Boolean(candidate));
+
+  if (candidates.length === 0) return null;
+
+  const candidatesWithPerformance = candidates.filter((candidate) => hasSnapshotPerformanceData(candidate.result));
+  const pool = candidatesWithPerformance.length > 0 ? candidatesWithPerformance : candidates;
+
+  pool.sort((left, right) => {
+    const stockDelta = right.result.stocks.length - left.result.stocks.length;
+    if (stockDelta !== 0) return stockDelta;
+    return getScanTimeMs(right.result.scanTime) - getScanTimeMs(left.result.scanTime);
+  });
+
+  const best = pool[0];
+  const scanTimeMs = getScanTimeMs(best.result.scanTime);
   return {
-    data: result.data,
-    needsRevalidation: result.needsRevalidation,
-    cachedAt: result.cachedAt,
+    ...best,
+    ageMs: scanTimeMs ? Date.now() - scanTimeMs : Number.POSITIVE_INFINITY,
   };
 }
 
-// Cache individual stock with SWR metadata
-async function cacheStock(stock: StockData): Promise<void> {
-  await swrCacheSet(`${STOCK_CACHE_PREFIX}${stock.symbol}`, stock, STOCK_CACHE_TTL);
+function scheduleSnapshotRefresh(reason: string, scope: BackgroundRefreshScope): void {
+  if (snapshotRefreshInFlight) return;
+
+  snapshotRefreshInFlight = refreshBackgroundCaches(scope, { forceRefresh: true })
+    .then((result) => {
+      console.log(`Scanner snapshot refresh complete (${reason}):`, result);
+      return result;
+    })
+    .catch((error) => {
+      console.error(`Scanner snapshot refresh failed (${reason}):`, error);
+    })
+    .finally(() => {
+      snapshotRefreshInFlight = null;
+    });
 }
 
 // Merge Finviz data into stock data
@@ -91,7 +161,11 @@ function mergeFinvizData(stock: StockData, finvizData: FinvizStockData | null): 
   if (!finvizData) return stock;
 
   // If stock has no real momentum data (Stooq fallback), use Finviz performance metrics
-  const needsPerformanceData = stock.momentum1M === 0 && stock.momentum3M === 0 && stock.momentum6M === 0;
+  const needsPerformanceData =
+    stock.momentum1M === 0 &&
+    stock.momentum3M === 0 &&
+    stock.momentum6M === 0 &&
+    stock.momentum1Y === 0;
   const needsAdrBackfill = !Number.isFinite(stock.adrPercent) || stock.adrPercent <= 0;
 
   const merged: StockData = {
@@ -210,16 +284,77 @@ export async function GET(request: NextRequest) {
           timestamp: new Date().toISOString()
         });
 
-        // 1.5 Get SPY performance for RS Rating calculation (only once)
-        sendEvent("status", { phase: "spy_loading", message: "Lade SPY Performance..." });
-        const spyPerformance = await getSPYPerformance();
+        const blockingRefresh = searchParams.get("blocking") === "true" || searchParams.get("live") === "true";
+
+        // Fast path: always serve the last complete scanner snapshot first.
+        // This keeps the Scanner page responsive even while a real refresh runs.
+        if (!blockingRefresh) {
+          const snapshot = await getBestCachedSnapshot();
+          if (snapshot?.result.stocks.length) {
+            const normalizedStocks = snapshot.result.stocks.map(normalizeCachedStock);
+            const filteredSnapshot = filterByScanType(normalizedStocks, scanType);
+            const ageSeconds = Number.isFinite(snapshot.ageMs) ? Math.max(0, Math.round(snapshot.ageMs / 1000)) : null;
+            const shouldRefreshSnapshot = forceRefresh || snapshot.ageMs > SNAPSHOT_REFRESH_AFTER_MS;
+
+            sendEvent("status", {
+              phase: "snapshot",
+              message: `${filteredSnapshot.length} Aktien aus ${snapshot.source === "full" ? "Full" : "Core"}-Snapshot geladen`,
+              source: snapshot.source,
+              ageSeconds,
+              backgroundRefresh: shouldRefreshSnapshot,
+            });
+
+            for (let i = 0; i < filteredSnapshot.length; i += SNAPSHOT_CHUNK_SIZE) {
+              const chunk = filteredSnapshot.slice(i, i + SNAPSHOT_CHUNK_SIZE);
+              sendEvent("cached", {
+                stocks: chunk,
+                count: filteredSnapshot.length,
+                source: `snapshot-${snapshot.source}`,
+                progress: {
+                  sent: i + chunk.length,
+                  total: filteredSnapshot.length,
+                },
+                message: `${i + chunk.length}/${filteredSnapshot.length} aus Snapshot`,
+              });
+            }
+
+            if (shouldRefreshSnapshot) {
+              scheduleSnapshotRefresh(forceRefresh ? "manual-refresh" : "stale-snapshot", snapshot.source === "full" ? "full" : "core");
+            }
+
+            sendEvent("complete", {
+              totalStocks: filteredSnapshot.length,
+              totalScanned: snapshot.result.totalScanned ?? snapshot.result.stocks.length,
+              fromCache: filteredSnapshot.length,
+              freshlyFetched: 0,
+              fromSnapshot: true,
+              snapshotSource: snapshot.source,
+              snapshotAgeSeconds: ageSeconds,
+              backgroundRefresh: shouldRefreshSnapshot,
+              scanTime: new Date().toISOString(),
+              cacheStats: await getCacheStats(),
+            });
+
+            if (!streamClosed) {
+              streamClosed = true;
+              controller.close();
+            }
+            return;
+          }
+        }
+
+        // 1.5 Get market context and symbols in parallel.
+        sendEvent("status", { phase: "bootstrap", message: "Lade Markt- und Symbolbasis..." });
+        const [spyPerformance, allSymbols] = await Promise.all([
+          getSPYPerformance(),
+          getStockSymbols(forceRefresh),
+        ]);
         sendEvent("status", {
           phase: "spy_loaded",
           message: `SPY Performance geladen (1M: ${spyPerformance.m1.toFixed(1)}%, 3M: ${spyPerformance.m3.toFixed(1)}%, 6M: ${spyPerformance.m6.toFixed(1)}%)`
         });
 
         // 2. Get symbols to scan
-        const allSymbols = await getStockSymbols(forceRefresh);
         const symbols = symbolLimit ? allSymbols.slice(0, symbolLimit) : allSymbols;
         const totalSymbols = symbols.length;
 
@@ -229,29 +364,20 @@ export async function GET(request: NextRequest) {
           total: totalSymbols
         });
 
-        // 3. Check for cached stocks first (if not force refresh)
+        // 3. Check for cached stocks first. Manual refresh also serves cache first
+        // unless explicitly requested as blocking/live.
         const cachedStocks: StockData[] = [];
         const symbolsToFetch: string[] = [];
-        const symbolsToRevalidate: string[] = []; // Stocks that need background refresh
+        const symbolsToRevalidate = new Set<string>(); // Stocks that need background refresh
 
-        if (!forceRefresh) {
+        if (!blockingRefresh) {
           sendEvent("status", { phase: "cache_check", message: "Prüfe Cache..." });
 
-          // Check cache for each symbol in parallel batches
-          const cacheCheckBatchSize = 100;
+          // Check cache with Redis MGET batches (reduces roundtrips significantly).
+          const cacheCheckBatchSize = 300;
           for (let i = 0; i < symbols.length; i += cacheCheckBatchSize) {
             const batch = symbols.slice(i, i + cacheCheckBatchSize);
-            const cacheResults = await Promise.all(
-              batch.map(async (symbol) => {
-                const result = await getCachedStock(symbol);
-                return {
-                  symbol,
-                  data: result.data,
-                  needsRevalidation: result.needsRevalidation,
-                  cachedAt: result.cachedAt
-                };
-              })
-            );
+            const cacheResults = await getStocksWithSWRBatch<StockData>(batch);
 
             for (const { symbol, data, needsRevalidation } of cacheResults) {
               if (data) {
@@ -260,9 +386,15 @@ export async function GET(request: NextRequest) {
                   catalystScore: data.catalystScore ?? 0,
                   catalystSignals: Array.isArray(data.catalystSignals) ? data.catalystSignals : [],
                 }));
-                // Mark for background revalidation if older than 4 hours
-                if (needsRevalidation) {
-                  symbolsToRevalidate.push(symbol);
+                // Mark stale or incomplete cache entries for non-blocking refresh.
+                if (
+                  needsRevalidation ||
+                  (data.momentum1M === 0 &&
+                    data.momentum3M === 0 &&
+                    data.momentum6M === 0 &&
+                    data.momentum1Y === 0)
+                ) {
+                  symbolsToRevalidate.add(symbol);
                 }
               } else {
                 symbolsToFetch.push(symbol);
@@ -270,39 +402,7 @@ export async function GET(request: NextRequest) {
             }
           }
 
-          // Enrich cached stocks that have zero momentum with Finviz data
           if (cachedStocks.length > 0) {
-            const needsEnrichment = cachedStocks.filter(
-              s => s.momentum1M === 0 && s.momentum3M === 0 && s.momentum6M === 0
-            );
-            if (needsEnrichment.length > 0) {
-              sendEvent("status", { phase: "cache_enrich", message: `Ergänze ${needsEnrichment.length} Aktien mit Finviz-Daten...` });
-              const enrichSymbols = needsEnrichment.map(s => s.symbol);
-              // Fetch in chunks of 50 to avoid overwhelming Finviz
-              const enrichChunkSize = 50;
-              const finvizMap = new Map<string, FinvizStockData>();
-              for (let i = 0; i < enrichSymbols.length; i += enrichChunkSize) {
-                const chunk = enrichSymbols.slice(i, i + enrichChunkSize);
-                try {
-                  const chunkData = await fetchFinvizDataWithCache(chunk);
-                  chunkData.forEach((v, k) => finvizMap.set(k, v));
-                } catch { /* continue with partial data */ }
-              }
-              // Apply enrichment
-              for (let i = 0; i < cachedStocks.length; i++) {
-                const stock = cachedStocks[i];
-                if (stock.momentum1M === 0 && stock.momentum3M === 0 && stock.momentum6M === 0) {
-                  const finviz = finvizMap.get(stock.symbol) || finvizMap.get(stock.symbol.toUpperCase()) || null;
-                  if (finviz) {
-                    cachedStocks[i] = mergeFinvizData(stock, finviz);
-                    // Update cache with enriched data
-                    cacheStock(cachedStocks[i]).catch(() => {});
-                  }
-                }
-              }
-              console.log(`Cache enrichment: ${finvizMap.size}/${needsEnrichment.length} stocks enriched with Finviz data`);
-            }
-
             // Apply filter before sending
             const filteredCached = filterByScanType(cachedStocks, scanType);
 
@@ -319,6 +419,52 @@ export async function GET(request: NextRequest) {
                 },
                 message: `${i + chunk.length}/${filteredCached.length} aus Cache`
               });
+            }
+
+            const minimumUsefulCache = Math.min(80, totalSymbols);
+            const canServeInventoryCache = cachedStocks.length >= minimumUsefulCache;
+            if (canServeInventoryCache) {
+              const scanTime = new Date();
+              const snapshotResult: ScanResult = {
+                stocks: cachedStocks,
+                scanTime,
+                totalScanned: cachedStocks.length,
+              };
+
+              if (symbolLimit && symbolLimit <= SNAPSHOT_SEEDED_LIMIT) {
+                await cacheSeededScannerResults(snapshotResult);
+              } else {
+                await cacheScannerResults(snapshotResult);
+              }
+
+              const shouldRefreshSnapshot = forceRefresh || symbolsToFetch.length > 0 || symbolsToRevalidate.size > 0;
+              if (shouldRefreshSnapshot) {
+                scheduleSnapshotRefresh(forceRefresh ? "manual-refresh" : "inventory-cache-miss", symbolLimit && symbolLimit <= SNAPSHOT_SEEDED_LIMIT ? "core" : "full");
+              }
+
+              sendEvent("complete", {
+                totalStocks: filteredCached.length,
+                totalScanned: cachedStocks.length,
+                fromCache: cachedStocks.length,
+                freshlyFetched: 0,
+                fromSnapshot: true,
+                snapshotSource: "stock-cache",
+                stockCacheCoverage: {
+                  cached: cachedStocks.length,
+                  total: totalSymbols,
+                  missing: symbolsToFetch.length,
+                },
+                needsRevalidation: symbolsToRevalidate.size,
+                backgroundRefresh: shouldRefreshSnapshot,
+                scanTime: scanTime.toISOString(),
+                cacheStats: await getCacheStats(),
+              });
+
+              if (!streamClosed) {
+                streamClosed = true;
+                controller.close();
+              }
+              return;
             }
           }
         } else {
@@ -416,8 +562,8 @@ export async function GET(request: NextRequest) {
               consecutiveEmptyBatches = 0;
             }
 
-            // Cache each stock individually
-            await Promise.all(mergedStocks.map(stock => cacheStock(stock)));
+            // Cache each batch in a single Redis pipeline.
+            await cacheStocksWithSWR(mergedStocks, STOCK_CACHE_TTL);
             allFetchedStocks.push(...mergedStocks);
 
             processedCount += batch.length;
@@ -464,6 +610,20 @@ export async function GET(request: NextRequest) {
 
         // Filter by scan type if needed
         const filteredStocks = filterByScanType(allStocks, scanType);
+        const scanTime = new Date();
+
+        if (allStocks.length > 0) {
+          const snapshotResult: ScanResult = {
+            stocks: allStocks,
+            scanTime,
+            totalScanned: allStocks.length,
+          };
+          if (symbolLimit && symbolLimit <= SNAPSHOT_SEEDED_LIMIT) {
+            await cacheSeededScannerResults(snapshotResult);
+          } else {
+            await cacheScannerResults(snapshotResult);
+          }
+        }
 
         // 6. Send final result
         sendEvent("complete", {
@@ -471,18 +631,20 @@ export async function GET(request: NextRequest) {
           totalScanned: allStocks.length,
           fromCache: cachedStocks.length,
           freshlyFetched: allFetchedStocks.length,
-          needsRevalidation: symbolsToRevalidate.length,
-          scanTime: new Date().toISOString(),
+          needsRevalidation: symbolsToRevalidate.size,
+          scanTime: scanTime.toISOString(),
           cacheStats: await getCacheStats()
         });
 
         // 7. Background revalidation for stale cached stocks (async, non-blocking)
         // This runs after the stream is complete to update stale data
-        if (symbolsToRevalidate.length > 0) {
+        if (symbolsToRevalidate.size > 0) {
+          const revalidateSymbols = Array.from(symbolsToRevalidate);
+
           sendEvent("status", {
             phase: "background_revalidation",
-            message: `Aktualisiere ${symbolsToRevalidate.length} veraltete Einträge im Hintergrund...`,
-            count: symbolsToRevalidate.length
+            message: `Aktualisiere ${revalidateSymbols.length} veraltete Einträge im Hintergrund...`,
+            count: revalidateSymbols.length
           });
 
           // Fire and forget - revalidate in background batches
@@ -492,8 +654,8 @@ export async function GET(request: NextRequest) {
             let revalidatedCount = 0;
             let updatedCount = 0;
 
-            for (let i = 0; i < symbolsToRevalidate.length; i += revalidateBatchSize) {
-              const batch = symbolsToRevalidate.slice(i, i + revalidateBatchSize);
+            for (let i = 0; i < revalidateSymbols.length; i += revalidateBatchSize) {
+              const batch = revalidateSymbols.slice(i, i + revalidateBatchSize);
 
               try {
                 const stockPromises = batch.map((symbol) => processStock(symbol, spyPerformance));
@@ -550,13 +712,13 @@ export async function GET(request: NextRequest) {
                     });
                 }
 
-                await Promise.all(merged.map((stock) => cacheStock(stock)));
+                await cacheStocksWithSWR(merged, STOCK_CACHE_TTL);
 
                 revalidatedCount += batch.length;
                 updatedCount += merged.length;
 
                 // Small delay between batches
-                if (i + revalidateBatchSize < symbolsToRevalidate.length) {
+                if (i + revalidateBatchSize < revalidateSymbols.length) {
                   await new Promise(resolve => setTimeout(resolve, 100));
                 }
               } catch (error) {

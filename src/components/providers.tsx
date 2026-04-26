@@ -2,6 +2,7 @@
 
 import { ThemeProvider } from "next-themes";
 import { Toaster } from "@/components/ui/sonner";
+import { UserSettingsBootstrap } from "@/components/system/user-settings-bootstrap";
 
 export function Providers({ children }: { children: React.ReactNode }) {
   return (
@@ -11,6 +12,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
       enableSystem
       disableTransitionOnChange
     >
+      <UserSettingsBootstrap />
       {children}
       <Toaster richColors position="top-right" />
     </ThemeProvider>

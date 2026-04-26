@@ -2476,6 +2476,52 @@ function buildMomentumPercentileMap(
   return percentileMap;
 }
 
+function calculateIBDRelativeStrengthScore(stock: StockData): number | null {
+  const return3M = Number.isFinite(stock.momentum3M) ? stock.momentum3M : null;
+  const return12M = Number.isFinite(stock.momentum1Y) ? stock.momentum1Y : null;
+  if (return3M === null || return12M === null) return null;
+
+  const total3M = 1 + return3M / 100;
+  const total12M = 1 + return12M / 100;
+  if (total3M <= 0 || total12M <= 0) return null;
+
+  // IBD-style proxy from public descriptions:
+  // 12M performance ranked against the universe, with the latest 3M weighted higher.
+  // The latest quarter gets 40%, the prior 9M block 60%.
+  const prior9MReturn = ((total12M / total3M) - 1) * 100;
+  return return3M * 0.4 + prior9MReturn * 0.6;
+}
+
+function applyIBDRelativeStrengthRatings(stocks: StockData[]): StockData[] {
+  if (stocks.length === 0) return stocks;
+
+  const ranked = stocks
+    .map((stock) => ({
+      symbol: stock.symbol,
+      score: calculateIBDRelativeStrengthScore(stock),
+    }))
+    .filter((entry): entry is { symbol: string; score: number } => Number.isFinite(entry.score))
+    .sort((a, b) => b.score - a.score);
+
+  if (ranked.length === 0) {
+    return stocks.map((stock) => ({ ...stock, rsRating: 50 }));
+  }
+
+  const total = ranked.length;
+  const ratingMap = new Map<string, number>();
+
+  for (let index = 0; index < ranked.length; index += 1) {
+    const percentile = 100 - ((index + 1) / total) * 100;
+    const rating = Math.max(1, Math.min(99, Math.round(percentile)));
+    ratingMap.set(ranked[index].symbol, rating);
+  }
+
+  return stocks.map((stock) => ({
+    ...stock,
+    rsRating: ratingMap.get(stock.symbol) ?? stock.rsRating ?? 50,
+  }));
+}
+
 function applyStockbeeQullamaggieAlignment(
   stocks: StockData[],
   thresholdPercentile: number = 2
@@ -2595,6 +2641,26 @@ export async function runFullScan(symbols: string[] = STOCK_UNIVERSE): Promise<S
     }
   }
 
+  const missingAfterQuoteFallbacks = symbols.filter((symbol) => !baseResultsMap.has(symbol.toUpperCase()));
+  if (missingAfterQuoteFallbacks.length > 0) {
+    try {
+      const finvizFallbackMap = await fetchFinvizDataWithCache(missingAfterQuoteFallbacks.slice(0, 400));
+      let added = 0;
+      for (const [fallbackSymbol, data] of finvizFallbackMap.entries()) {
+        if (baseResultsMap.has(fallbackSymbol.toUpperCase())) continue;
+        const stock = buildStockFromFinvizData(fallbackSymbol, data, spyPerformance);
+        if (stock.price <= 0) continue;
+        baseResultsMap.set(stock.symbol.toUpperCase(), stock);
+        added += 1;
+      }
+      if (added > 0) {
+        console.warn(`Finviz quote fallback added ${added} stocks after quote fallbacks`);
+      }
+    } catch (error) {
+      console.error("Finviz quote fallback failed:", error);
+    }
+  }
+
   let baseResults = Array.from(baseResultsMap.values());
 
   if (baseResults.length === 0) {
@@ -2648,6 +2714,7 @@ export async function runFullScan(symbols: string[] = STOCK_UNIVERSE): Promise<S
     stock.proxyPlays = findProxyPlaysWithIndex(stock, proxyPlayIndex);
   }
 
+  results = applyIBDRelativeStrengthRatings(results);
   results = applyStockbeeQullamaggieAlignment(results, 2);
 
   return {
@@ -2829,17 +2896,45 @@ export async function runFullScanWithCache(
       };
     }
 
-    // Cache the results
+    let resultsToCache = results;
     if (useCache && results.stocks.length > 0) {
-      await setCache(results);
-      console.log(`Cached scanner results: ${results.stocks.length} stocks`);
+      const existingSnapshot = await getCache<ScanResult>();
+      const existingStocks = Array.isArray(existingSnapshot?.stocks) ? existingSnapshot.stocks : [];
+
+      if (existingStocks.length > results.stocks.length) {
+        const mergedStocks = new Map<string, StockData>();
+        for (const stock of existingStocks) {
+          if (stock?.symbol) mergedStocks.set(stock.symbol.toUpperCase(), stock);
+        }
+        for (const stock of results.stocks) {
+          if (stock?.symbol) mergedStocks.set(stock.symbol.toUpperCase(), stock);
+        }
+
+        if (mergedStocks.size > results.stocks.length) {
+          resultsToCache = {
+            ...results,
+            stocks: [...mergedStocks.values()],
+            scanTime: new Date(),
+            totalScanned: mergedStocks.size,
+          };
+          console.log(
+            `Merged partial ${cacheKey} scan (${results.stocks.length}) into existing snapshot (${existingStocks.length}); keeping ${mergedStocks.size} stocks`
+          );
+        }
+      }
+    }
+
+    // Cache the results
+    if (useCache && resultsToCache.stocks.length > 0) {
+      await setCache(resultsToCache);
+      console.log(`Cached scanner results: ${resultsToCache.stocks.length} stocks`);
     } else if (results.stocks.length === 0) {
       console.warn("Scan produced 0 stocks, skipping cache overwrite");
     }
 
     const stats = await getCacheStats();
     return {
-      ...results,
+      ...resultsToCache,
       fromCache: false,
       cacheStats: stats,
     };
@@ -2884,8 +2979,14 @@ export async function fetchFinvizDataWithCache(
     const hasPlausible52WHigh =
       !hasFiniteHighDist ||
       (highDist >= -100 && highDist <= 50);
+    const hasPerformanceBuckets = [
+      data.perfMonth,
+      data.perfQuarter,
+      data.perfHalfY,
+      data.perfYear,
+    ].some((value) => typeof value === "number" && Number.isFinite(value));
 
-    if (!hasAdrInputs || !hasPlausible52WHigh) {
+    if (!hasAdrInputs || !hasPlausible52WHigh || !hasPerformanceBuckets) {
       cachedData.delete(symbol);
       staleCount += 1;
     }

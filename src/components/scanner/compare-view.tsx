@@ -7,10 +7,11 @@ import {
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
-import { X, ArrowUpRight, ArrowDownRight, Star } from "lucide-react";
+import { X, ArrowUpRight, ArrowDownRight } from "lucide-react";
 import { StockData } from "@/types/scanner";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
+import { useCurrencyFormatter } from "@/hooks/use-currency-formatter";
 
 interface CompareViewProps {
     open: boolean;
@@ -20,6 +21,7 @@ interface CompareViewProps {
 }
 
 export function CompareView({ open, onOpenChange, stocks, onRemove }: CompareViewProps) {
+    const { formatMoney, formatCompactMoney } = useCurrencyFormatter();
     if (stocks.length === 0) return null;
 
     const formatNumber = (num: number | null | undefined, decimals = 2) => {
@@ -41,8 +43,8 @@ export function CompareView({ open, onOpenChange, stocks, onRemove }: CompareVie
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="max-w-[100vw] sm:max-w-[95vw] h-[100dvh] sm:h-[90vh] flex flex-col p-0">
-                <DialogHeader className="px-6 py-4 border-b">
+            <DialogContent className="flex h-[100dvh] max-w-[100vw] flex-col p-0 sm:h-[90vh] sm:max-w-[95vw]">
+                <DialogHeader className="border-b px-3 py-3 sm:px-4">
                     <DialogTitle>Aktien Vergleich</DialogTitle>
                     <DialogDescription>
                         {stocks.length} Aktien im direkten Vergleich
@@ -50,25 +52,26 @@ export function CompareView({ open, onOpenChange, stocks, onRemove }: CompareVie
                 </DialogHeader>
 
                 <ScrollArea className="flex-1">
-                    <div className="p-6">
+                    <div className="p-3 sm:p-4">
                         <div className="flex flex-col sm:flex-row gap-4 sm:min-w-max">
                             {/* Labels Column */}
-                            <div className="w-40 flex-shrink-0 space-y-4 pt-[52px] hidden sm:block">
+                            <div className="hidden w-36 flex-shrink-0 space-y-3 pt-[48px] text-xs sm:block">
                                 <div className="h-8 flex items-center font-medium text-muted-foreground">Preis</div>
                                 <div className="h-8 flex items-center font-medium text-muted-foreground">Veränderung</div>
                                 <div className="h-8 flex items-center font-medium text-muted-foreground">Sektor</div>
                                 <div className="h-8 flex items-center font-medium text-muted-foreground">Industrie</div>
                                 <div className="h-8 flex items-center font-medium text-muted-foreground">Marktkapitalisierung</div>
 
-                                <div className="border-t pt-4 mt-4">
-                                    <h4 className="font-semibold mb-2">Momentum</h4>
+                                <div className="mt-3 border-t pt-3">
+                                    <h4 className="mb-2 font-semibold">Momentum</h4>
                                     <div className="h-8 flex items-center font-medium text-muted-foreground">1 Monat</div>
                                     <div className="h-8 flex items-center font-medium text-muted-foreground">3 Monate</div>
                                     <div className="h-8 flex items-center font-medium text-muted-foreground">6 Monate</div>
+                                    <div className="h-8 flex items-center font-medium text-muted-foreground">1 Jahr</div>
                                 </div>
 
-                                <div className="border-t pt-4 mt-4">
-                                    <h4 className="font-semibold mb-2">Technical</h4>
+                                <div className="mt-3 border-t pt-3">
+                                    <h4 className="mb-2 font-semibold">Technical</h4>
                                     <div className="h-8 flex items-center font-medium text-muted-foreground">RS Rating</div>
                                     <div className="h-8 flex items-center font-medium text-muted-foreground">ADR %</div>
                                     <div className="h-8 flex items-center font-medium text-muted-foreground">RSI</div>
@@ -76,8 +79,8 @@ export function CompareView({ open, onOpenChange, stocks, onRemove }: CompareVie
                                     <div className="h-8 flex items-center font-medium text-muted-foreground">Volumen Ratio</div>
                                 </div>
 
-                                <div className="border-t pt-4 mt-4">
-                                    <h4 className="font-semibold mb-2">Setup</h4>
+                                <div className="mt-3 border-t pt-3">
+                                    <h4 className="mb-2 font-semibold">Setup</h4>
                                     <div className="h-8 flex items-center font-medium text-muted-foreground">Setup Score</div>
                                     <div className="h-8 flex items-center font-medium text-muted-foreground">Qullamaggie</div>
                                     <div className="h-8 flex items-center font-medium text-muted-foreground">EMA Trend</div>
@@ -86,7 +89,7 @@ export function CompareView({ open, onOpenChange, stocks, onRemove }: CompareVie
 
                             {/* Stock Columns */}
                             {stocks.map((stock) => (
-                                <div key={stock.symbol} className="w-full sm:w-64 flex-shrink-0 space-y-4 bg-zinc-900/50 rounded-lg p-4 border border-zinc-800 relative">
+                                <div key={stock.symbol} className="relative w-full flex-shrink-0 space-y-3 rounded-md border border-zinc-800 bg-zinc-900/50 p-3 sm:w-56">
                                     <Button
                                         variant="ghost"
                                         size="icon"
@@ -96,8 +99,8 @@ export function CompareView({ open, onOpenChange, stocks, onRemove }: CompareVie
                                         <X className="h-4 w-4" />
                                     </Button>
 
-                                    <div className="h-[44px]">
-                                        <h3 className="text-lg font-bold flex items-center gap-2">
+                                    <div className="h-10">
+                                        <h3 className="flex items-center gap-2 text-base font-bold">
                                             {stock.symbol}
                                             {stock.isEP && (
                                                 <Badge variant="secondary" className="text-[10px] h-5 px-1 bg-zinc-800 text-zinc-300 border border-zinc-700">
@@ -111,7 +114,7 @@ export function CompareView({ open, onOpenChange, stocks, onRemove }: CompareVie
                                     </div>
 
                                     {/* Basic Data */}
-                                    <div className="h-8 flex items-center font-medium">${formatNumber(stock.price)}</div>
+                                    <div className="h-8 flex items-center font-medium">{formatMoney(stock.price, "USD")}</div>
                                     <div className={cn(
                                         "h-8 flex items-center font-medium font-mono tabular-nums",
                                         stock.changePercent >= 0 ? "text-emerald-500" : "text-red-500"
@@ -123,7 +126,7 @@ export function CompareView({ open, onOpenChange, stocks, onRemove }: CompareVie
                                     <div className="h-8 flex items-center text-sm truncate" title={stock.industry}>{stock.industry || "-"}</div>
                                     <div className="h-8 flex items-center text-sm">
                                         {/* Simplified Market Cap Display logic here if needed, or re-use helper */}
-                                        {(stock.marketCap / 1000000000).toFixed(2)}Md
+                                        {formatCompactMoney(stock.marketCap, "USD")}
                                     </div>
 
                                     {/* Momentum */}
@@ -137,6 +140,9 @@ export function CompareView({ open, onOpenChange, stocks, onRemove }: CompareVie
                                         </div>
                                         <div className={cn("h-8 flex items-center font-mono tabular-nums", stock.momentum6M >= 0 ? "text-emerald-500" : "text-red-500")}>
                                             {formatNumber(stock.momentum6M)}%
+                                        </div>
+                                        <div className={cn("h-8 flex items-center font-mono tabular-nums", stock.momentum1Y >= 0 ? "text-emerald-500" : "text-red-500")}>
+                                            {formatNumber(stock.momentum1Y)}%
                                         </div>
                                     </div>
 

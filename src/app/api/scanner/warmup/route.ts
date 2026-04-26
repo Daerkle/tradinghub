@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { scannerRateLimit } from "@/lib/rate-limiter";
-import { getCachedScannerResults, getCachedSeededScannerResults } from "@/lib/redis-cache";
+import { CACHE_TTL, getCachedScannerResults, getCachedSeededScannerResults } from "@/lib/redis-cache";
 import { getStockSymbols, runFullScanWithCache, type ScanResult } from "@/lib/scanner-service";
 
 type WarmupMode = "seeded" | "full";
@@ -9,6 +9,13 @@ function parsePositiveInt(value: string | null, fallback: number, max: number): 
   const parsed = Number.parseInt(value || "", 10);
   if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
   return Math.min(parsed, max);
+}
+
+function isFresh(scanResult: ScanResult | null | undefined): boolean {
+  if (!scanResult?.stocks?.length || !scanResult.scanTime) return false;
+  const scanTime = new Date(scanResult.scanTime).getTime();
+  if (!Number.isFinite(scanTime)) return false;
+  return Date.now() - scanTime < CACHE_TTL.SCANNER_DATA * 1000;
 }
 
 export async function GET(request: NextRequest) {
@@ -27,7 +34,7 @@ export async function GET(request: NextRequest) {
   try {
     if (!forceRefresh) {
       const full = await getCachedScannerResults<ScanResult>();
-      if (full && full.stocks.length > 0) {
+      if (full && isFresh(full)) {
         return NextResponse.json({
           generatedAt: new Date().toISOString(),
           status: "fresh",
@@ -40,7 +47,7 @@ export async function GET(request: NextRequest) {
 
       if (mode === "seeded") {
         const seeded = await getCachedSeededScannerResults<ScanResult>();
-        if (seeded && seeded.stocks.length > 0) {
+        if (seeded && isFresh(seeded)) {
           return NextResponse.json({
             generatedAt: new Date().toISOString(),
             status: "fresh",
@@ -88,4 +95,3 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Failed to warm up scanner" }, { status: 500 });
   }
 }
-

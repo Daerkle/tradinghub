@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useCallback, useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -36,6 +36,7 @@ import {
   XCircle,
   Clock,
 } from "lucide-react";
+import { readClientJsonCache, writeClientJsonCache } from "@/lib/client-json-cache";
 
 interface Setup {
   id: string;
@@ -65,6 +66,16 @@ interface Stats {
   avgGain: string;
 }
 
+type SetupsResponse = {
+  setups: Setup[];
+  stats: Stats;
+  pagination: {
+    totalPages: number;
+  };
+};
+
+const SETUP_BROWSER_MAX_AGE_MS = 90 * 1000;
+
 const SETUP_TYPE_LABELS: Record<string, { label: string; icon: React.ReactNode; color: string }> = {
   EP: { label: "Episodic Pivot", icon: <Zap className="h-4 w-4" />, color: "bg-yellow-500" },
   PowerEarningsGap: { label: "Power Earnings Gap", icon: <TrendingUp className="h-4 w-4" />, color: "bg-green-500" },
@@ -80,41 +91,63 @@ export default function DatabasePage() {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [search, setSearch] = useState("");
+  const [submittedSearch, setSubmittedSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<string>("");
   const [outcomeFilter, setOutcomeFilter] = useState<string>("");
 
-  const fetchSetups = async () => {
-    setLoading(true);
-    try {
-      const params = new URLSearchParams();
-      params.set("page", page.toString());
-      params.set("limit", "20");
-      if (typeFilter) params.set("type", typeFilter);
-      if (outcomeFilter) params.set("outcome", outcomeFilter);
-      if (search) params.set("search", search);
+  const buildSetupsUrl = useCallback((targetPage = page) => {
+    const params = new URLSearchParams();
+    params.set("page", targetPage.toString());
+    params.set("limit", "20");
+    if (typeFilter) params.set("type", typeFilter);
+    if (outcomeFilter) params.set("outcome", outcomeFilter);
+    if (submittedSearch) params.set("search", submittedSearch);
+    return `/api/database/setups?${params.toString()}`;
+  }, [outcomeFilter, page, submittedSearch, typeFilter]);
 
-      const response = await fetch(`/api/database/setups?${params.toString()}`);
+  const applySetupsPayload = useCallback((data: SetupsResponse) => {
+    setSetups(data.setups);
+    setStats(data.stats);
+    setTotalPages(data.pagination.totalPages);
+  }, []);
+
+  const fetchSetups = useCallback(async (targetPage = page) => {
+    const url = buildSetupsUrl(targetPage);
+    const cacheKey = `setup-browser:${url}`;
+    const cached = readClientJsonCache<SetupsResponse>(cacheKey, {
+      maxAgeMs: SETUP_BROWSER_MAX_AGE_MS,
+      allowStale: true,
+    });
+
+    if (cached) {
+      applySetupsPayload(cached.data);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
+
+    try {
+      const response = await fetch(url);
       if (response.ok) {
-        const data = await response.json();
-        setSetups(data.setups);
-        setStats(data.stats);
-        setTotalPages(data.pagination.totalPages);
+        const data = (await response.json()) as SetupsResponse;
+        applySetupsPayload(data);
+        writeClientJsonCache(cacheKey, data);
       }
     } catch (error) {
       console.error("Error fetching setups:", error);
     } finally {
       setLoading(false);
     }
-  };
+  }, [applySetupsPayload, buildSetupsUrl, page]);
 
   useEffect(() => {
-    fetchSetups();
-  }, [page, typeFilter, outcomeFilter]);
+    void fetchSetups();
+  }, [fetchSetups]);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     setPage(1);
-    fetchSetups();
+    setSubmittedSearch(search.trim());
   };
 
   const getOutcomeBadge = (outcome: string | null, stoppedOut: boolean | null) => {
@@ -142,15 +175,15 @@ export default function DatabasePage() {
   };
 
   return (
-    <div className="mx-auto w-full max-w-7xl space-y-6 py-4 sm:py-6">
+    <div className="mx-auto w-full max-w-7xl space-y-4 py-4 sm:py-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">Setup Datenbank</h1>
+          <h1 className="text-xl font-bold tracking-tight sm:text-2xl">Setup Datenbank</h1>
           <p className="text-muted-foreground">
             Qullamaggie Setups - Winners und Losers zum Lernen
           </p>
         </div>
-        <Button variant="outline" onClick={fetchSetups}>
+        <Button variant="outline" onClick={() => void fetchSetups()}>
           <RefreshCw className="h-4 w-4 mr-2" />
           Aktualisieren
         </Button>
@@ -216,7 +249,7 @@ export default function DatabasePage() {
 
       {/* Filters */}
       <Card>
-        <CardContent className="pt-6">
+        <CardContent className="pt-4">
           <div className="flex flex-col gap-4 lg:flex-row lg:flex-wrap">
             <form onSubmit={handleSearch} className="flex-1 min-w-0">
               <div className="relative">
@@ -262,11 +295,11 @@ export default function DatabasePage() {
       <Card>
         <CardContent className="p-0">
           {loading ? (
-            <div className="flex items-center justify-center py-12">
+            <div className="flex items-center justify-center py-6">
               <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
             </div>
           ) : setups.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+            <div className="flex flex-col items-center justify-center py-6 text-muted-foreground">
               <Database className="h-12 w-12 mb-4" />
               <p className="text-lg font-medium">Keine Setups gefunden</p>
               <p className="text-sm">Starte den Backfill um Daten zu laden</p>

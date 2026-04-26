@@ -121,21 +121,8 @@ function parse52WDistance(
   return ((currentPrice as number) / (level as number) - 1) * 100;
 }
 
-// Extract value from HTML table row
-function extractValue(html: string, label: string): string | undefined {
-  // Finviz markup changes frequently (classes, nested tags like <small>, label suffixes like "ATR (14)").
-  // Keep this extraction tolerant:
-  // 1) Match the label cell text starting with the given label (allows suffixes like "(14)")
-  // 2) Capture the next <td> contents
-  // 3) Strip all tags and normalize whitespace
-  const rowRegex = new RegExp(
-    `<td[^>]*>\\s*(?:<[^>]*>\\s*)*${escapeRegex(label)}[^<]*</td>\\s*<td[^>]*>([\\s\\S]*?)</td>`,
-    "i"
-  );
-  const match = html.match(rowRegex);
-  if (!match || !match[1]) return undefined;
-
-  return match[1]
+function normalizeCellText(cellHtml: string): string {
+  return cellHtml
     .replace(/<[^>]*>/g, "")
     .replace(/&nbsp;/gi, " ")
     .replace(/&amp;/gi, "&")
@@ -145,8 +132,24 @@ function extractValue(html: string, label: string): string | undefined {
     .trim();
 }
 
-function escapeRegex(str: string): string {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function labelMatches(cellText: string, label: string): boolean {
+  if (cellText === label) return true;
+  return cellText.startsWith(`${label} `) || cellText.startsWith(`${label}(`);
+}
+
+// Extract value from Finviz snapshot cells.
+function extractValue(html: string, label: string): string | undefined {
+  // Finviz markup changes frequently and now wraps labels/values in nested div/span/small tags.
+  // Treat the snapshot table as ordered <td> cells: find the label cell and read the next value cell.
+  const cells = Array.from(html.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)).map((match) => match[1] ?? "");
+
+  for (let index = 0; index < cells.length - 1; index += 1) {
+    const cellText = normalizeCellText(cells[index]);
+    if (!labelMatches(cellText, label)) continue;
+    return normalizeCellText(cells[index + 1]);
+  }
+
+  return undefined;
 }
 
 // Fetch Finviz data for a single stock by scraping the quote page

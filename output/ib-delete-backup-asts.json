@@ -1,0 +1,60 @@
+{
+  "deletedAt": "2026-04-17T06:45:36.412Z",
+  "userId": "mLQ3PXMAQR",
+  "objects": [
+    {
+      "objectId": "9FWlRKauxF",
+      "entryTime": {
+        "__type": "Date",
+        "iso": "2026-02-18T13:51:56.000Z"
+      },
+      "exitTime": {
+        "__type": "Date",
+        "iso": "2026-03-05T08:32:48.000Z"
+      },
+      "user": {
+        "__type": "Pointer",
+        "className": "_User",
+        "objectId": "mLQ3PXMAQR"
+      },
+      "symbol": "ASTS",
+      "side": "short",
+      "entryPrice": 83.9905,
+      "exitPrice": 103,
+      "quantity": 50,
+      "pnl": -951.4847500000002,
+      "commission": 1.00975,
+      "importSource": "interactiveBrokers",
+      "importHash": "interactiveBrokers|ASTS|short|83.9905|103.0000|50.0000|1771422716|1772699568",
+      "createdAt": "2026-03-17T20:01:43.030Z",
+      "updatedAt": "2026-03-17T20:01:43.030Z"
+    },
+    {
+      "objectId": "H8bh1sTAqK",
+      "entryTime": {
+        "__type": "Date",
+        "iso": "2026-02-17T10:15:31.000Z"
+      },
+      "exitTime": {
+        "__type": "Date",
+        "iso": "2026-02-18T13:51:56.000Z"
+      },
+      "user": {
+        "__type": "Pointer",
+        "className": "_User",
+        "objectId": "mLQ3PXMAQR"
+      },
+      "symbol": "ASTS",
+      "side": "long",
+      "entryPrice": 83.3,
+      "exitPrice": 83.9905,
+      "quantity": 50,
+      "pnl": 33.01525000000001,
+      "commission": 1.50975,
+      "importSource": "interactiveBrokers",
+      "importHash": "interactiveBrokers|ASTS|long|83.3000|83.9905|50.0000|1771323331|1771422716",
+      "createdAt": "2026-03-17T20:01:43.030Z",
+      "updatedAt": "2026-03-17T20:01:43.030Z"
+    }
+  ]
+}

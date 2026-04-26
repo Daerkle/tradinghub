@@ -199,7 +199,7 @@ export default function DiaryDetailPage({ params }: PageProps) {
 
   if (isLoading) {
     return (
-      <div className="space-y-6">
+      <div className="space-y-4">
         <div className="flex items-center gap-4">
           <Skeleton className="h-10 w-10" />
           <div>
@@ -223,7 +223,7 @@ export default function DiaryDetailPage({ params }: PageProps) {
 
   if (error || !entry) {
     return (
-      <div className="space-y-6">
+      <div className="space-y-4">
         <div className="flex items-center gap-4">
           <Button variant="ghost" size="icon" asChild>
             <Link href="/diary">
@@ -236,7 +236,7 @@ export default function DiaryDetailPage({ params }: PageProps) {
           </div>
         </div>
         <Card className="border-destructive">
-          <CardContent className="pt-6">
+          <CardContent className="pt-4">
             <p className="text-destructive">{error || "Eintrag nicht gefunden"}</p>
             <Button asChild className="mt-4">
               <Link href="/diary">Zurück zur Übersicht</Link>
@@ -248,7 +248,7 @@ export default function DiaryDetailPage({ params }: PageProps) {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
           <Button variant="ghost" size="icon" asChild>
@@ -312,8 +312,8 @@ export default function DiaryDetailPage({ params }: PageProps) {
         </div>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-3">
-        <div className="lg:col-span-2 space-y-6">
+      <div className="grid gap-4 lg:grid-cols-3">
+        <div className="lg:col-span-2 space-y-4">
           <Card>
             <CardHeader>
               <CardTitle>Eintragsdetails</CardTitle>
@@ -405,7 +405,7 @@ export default function DiaryDetailPage({ params }: PageProps) {
           </Card>
         </div>
 
-        <div className="space-y-6">
+        <div className="space-y-4">
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center justify-between">
@@ -421,7 +421,7 @@ export default function DiaryDetailPage({ params }: PageProps) {
             </CardHeader>
             <CardContent>
               {images.length === 0 ? (
-                <p className="text-sm text-muted-foreground text-center py-8">
+                <p className="text-sm text-muted-foreground text-center py-6">
                   Noch keine Bilder hinzugefügt
                 </p>
               ) : (
@@ -512,7 +512,7 @@ export default function DiaryDetailPage({ params }: PageProps) {
               )}
 
               {linkedTrades.length === 0 ? (
-                <p className="text-sm text-muted-foreground text-center py-8">
+                <p className="text-sm text-muted-foreground text-center py-6">
                   Noch keine Trades verknüpft
                 </p>
               ) : (
@@ -568,7 +568,7 @@ export default function DiaryDetailPage({ params }: PageProps) {
 
           {entry.createdAt && (
             <Card>
-              <CardContent className="pt-6">
+              <CardContent className="pt-4">
                 <div className="space-y-2 text-sm">
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Erstellt:</span>

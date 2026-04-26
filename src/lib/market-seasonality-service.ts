@@ -13,7 +13,7 @@ import type {
   SeasonalityStatBucket,
 } from "@/types/market-seasonality";
 
-const MARKET_SEASONALITY_CACHE_PREFIX = "seasonality:market:v2:";
+const MARKET_SEASONALITY_CACHE_PREFIX = "seasonality:market:v3:";
 const MARKET_SEASONALITY_TIMEOUT_MS = 30_000;
 const MARKET_SEASONALITY_LOOKBACK_DAYS = 365 * 80;
 const STOOQ_TIMEOUT_MS = 15_000;
@@ -40,6 +40,13 @@ type ReturnPoint = {
   index: number;
   date: Date;
   returnPct: number;
+};
+
+type HistoricalCandlesResult = {
+  candles: CandleData[];
+  source: string;
+  sourceDetail: string;
+  sourceLinks: MarketSeasonalityOverview["sourceLinks"];
 };
 
 type StatAccumulator = {
@@ -120,6 +127,27 @@ function getStooqSymbol(symbol: string): string | null {
   if (normalized === "^RUT") return "^rut";
   if (/^[A-Z.-]{1,10}$/.test(normalized)) return `${normalized.toLowerCase()}.us`;
   return null;
+}
+
+function buildYahooHistoryUrl(symbol: string): string {
+  return `https://finance.yahoo.com/quote/${encodeURIComponent(symbol)}/history`;
+}
+
+function buildTradingViewUrl(symbol: string): string {
+  return `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(symbol)}`;
+}
+
+function buildBundledHistoryResult(symbol: string, candles: CandleData[]): HistoricalCandlesResult {
+  return {
+    candles,
+    source: "Lokaler Seasonality-Snapshot",
+    sourceDetail:
+      "Gebündelte Tageshistorie im App-Image. Wird genutzt, wenn Live-Quellen fehlen oder zu wenig Historie liefern.",
+    sourceLinks: [
+      { label: "Yahoo History", url: buildYahooHistoryUrl(symbol) },
+      { label: "TradingView", url: buildTradingViewUrl(symbol) },
+    ],
+  };
 }
 
 function monthKey(date: Date): string {
@@ -226,11 +254,14 @@ function pushWindowCase(
   return value;
 }
 
-async function fetchHistoricalCandles(symbol: string, lookbackDays: number): Promise<CandleData[]> {
+async function fetchHistoricalCandles(symbol: string, lookbackDays: number): Promise<HistoricalCandlesResult> {
+  const normalizedSymbol = normalizeSymbol(symbol);
+  const bundledSymbol = INDEX_PROXY_SYMBOLS[normalizedSymbol] ?? normalizedSymbol;
+  const bundledCandles = BUNDLED_SEASONALITY_HISTORY[bundledSymbol] ?? [];
   const period1 = new Date(Math.max(Date.UTC(1970, 0, 1), Date.now() - lookbackDays * 24 * 60 * 60 * 1000));
   const period2 = new Date();
 
-  for (const yahooSymbol of getYahooFetchSymbols(symbol)) {
+  for (const yahooSymbol of getYahooFetchSymbols(normalizedSymbol)) {
     try {
       const historical = await withTimeout(
         yahooFinance.chart(yahooSymbol, {
@@ -261,22 +292,39 @@ async function fetchHistoricalCandles(symbol: string, lookbackDays: number): Pro
         .filter((candle): candle is CandleData => candle !== null);
 
       if (candles.length >= 250) {
-        return candles;
+        return {
+          candles,
+          source: "Yahoo Finance Daily History",
+          sourceDetail:
+            yahooSymbol === normalizedSymbol
+              ? "Tägliche OHLCV-Historie direkt für das ausgewählte Symbol."
+              : `Tägliche OHLCV-Historie über Proxy ${yahooSymbol}, weil Indexsymbole nicht immer vollständig abrufbar sind.`,
+          sourceLinks: [
+            { label: `Yahoo ${yahooSymbol}`, url: buildYahooHistoryUrl(yahooSymbol) },
+            { label: "TradingView", url: buildTradingViewUrl(normalizedSymbol) },
+          ],
+        };
       }
     } catch {
       // try alias/fallback symbol
     }
   }
 
-  const openbbCandles = await fetchOpenBBHistoricalCandles(normalizeSymbol(symbol), lookbackDays);
+  const openbbCandles = await fetchOpenBBHistoricalCandles(normalizedSymbol, lookbackDays);
   if (openbbCandles.length >= 250) {
-    return openbbCandles;
+    return {
+      candles: openbbCandles,
+      source: "OpenBB Daily History",
+      sourceDetail: "Tägliche OHLCV-Historie über den lokalen OpenBB-Service.",
+      sourceLinks: [
+        { label: "OpenBB Docs", url: "https://docs.openbb.co/" },
+        { label: "TradingView", url: buildTradingViewUrl(normalizedSymbol) },
+      ],
+    };
   }
 
-  const stooqSymbol = getStooqSymbol(symbol);
-  const bundledSymbol = INDEX_PROXY_SYMBOLS[normalizeSymbol(symbol)] ?? normalizeSymbol(symbol);
-  const bundledCandles = BUNDLED_SEASONALITY_HISTORY[bundledSymbol];
-  if (!stooqSymbol) return bundledCandles ?? [];
+  const stooqSymbol = getStooqSymbol(normalizedSymbol);
+  if (!stooqSymbol) return buildBundledHistoryResult(bundledSymbol, bundledCandles);
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), STOOQ_TIMEOUT_MS);
@@ -288,14 +336,14 @@ async function fetchHistoricalCandles(symbol: string, lookbackDays: number): Pro
         Accept: "text/csv,*/*;q=0.8",
       },
     });
-    if (!response.ok) return [];
+    if (!response.ok) return buildBundledHistoryResult(bundledSymbol, bundledCandles);
 
     const csv = (await response.text()).trim();
     const lines = csv
       .split("\n")
       .map((line) => line.trim())
       .filter((line) => line.length > 0);
-    if (lines.length < 3) return [];
+    if (lines.length < 3) return buildBundledHistoryResult(bundledSymbol, bundledCandles);
 
     const header = lines[0].split(",").map((value) => value.trim().toLowerCase());
     const dateIndex = header.indexOf("date");
@@ -304,7 +352,9 @@ async function fetchHistoricalCandles(symbol: string, lookbackDays: number): Pro
     const lowIndex = header.indexOf("low");
     const closeIndex = header.indexOf("close");
     const volumeIndex = header.indexOf("volume");
-    if ([dateIndex, openIndex, highIndex, lowIndex, closeIndex].some((index) => index < 0)) return [];
+    if ([dateIndex, openIndex, highIndex, lowIndex, closeIndex].some((index) => index < 0)) {
+      return buildBundledHistoryResult(bundledSymbol, bundledCandles);
+    }
 
     const candles: CandleData[] = [];
     for (let i = 1; i < lines.length; i++) {
@@ -326,7 +376,15 @@ async function fetchHistoricalCandles(symbol: string, lookbackDays: number): Pro
       });
     }
     if (candles.length >= 250) {
-      return candles;
+      return {
+        candles,
+        source: "Stooq Daily CSV",
+        sourceDetail: `Tägliche OHLCV-Historie über Stooq (${stooqSymbol}).`,
+        sourceLinks: [
+          { label: `Stooq ${stooqSymbol}`, url: `https://stooq.com/q/d/l/?s=${encodeURIComponent(stooqSymbol)}&i=d` },
+          { label: "TradingView", url: buildTradingViewUrl(normalizedSymbol) },
+        ],
+      };
     }
   } catch {
     // fall through to bundled history
@@ -334,7 +392,7 @@ async function fetchHistoricalCandles(symbol: string, lookbackDays: number): Pro
     clearTimeout(timeout);
   }
 
-  return bundledCandles ?? [];
+  return buildBundledHistoryResult(bundledSymbol, bundledCandles);
 }
 
 function toDatedCandles(candles: CandleData[]): DatedCandle[] {
@@ -745,7 +803,7 @@ export async function fetchMarketSeasonalityOverview(
   const bundledSymbol = INDEX_PROXY_SYMBOLS[normalizedSymbol] ?? normalizedSymbol;
   const cacheKey = `${MARKET_SEASONALITY_CACHE_PREFIX}${normalizedSymbol}`;
   const cached = await smartCacheGet<MarketSeasonalityOverview>(cacheKey);
-  const persistedSnapshotPromise = readPersistentSnapshot<MarketSeasonalityOverview>("market-seasonality-v2", normalizedSymbol, {
+  const persistedSnapshotPromise = readPersistentSnapshot<MarketSeasonalityOverview>("market-seasonality-v3", normalizedSymbol, {
     maxAgeMs: MARKET_SEASONALITY_SNAPSHOT_MAX_AGE_MS,
   });
 
@@ -756,9 +814,11 @@ export async function fetchMarketSeasonalityOverview(
   }
 
   try {
-    const fetchedCandles = await fetchHistoricalCandles(normalizedSymbol, MARKET_SEASONALITY_LOOKBACK_DAYS);
+    const historical = await fetchHistoricalCandles(normalizedSymbol, MARKET_SEASONALITY_LOOKBACK_DAYS);
     const bundledCandles = BUNDLED_SEASONALITY_HISTORY[bundledSymbol] ?? [];
-    const rawCandles = fetchedCandles.length >= 500 ? fetchedCandles : bundledCandles;
+    const usingFetchedHistory = historical.candles.length >= 500;
+    const rawCandles = usingFetchedHistory ? historical.candles : bundledCandles;
+    const sourceInfo = usingFetchedHistory ? historical : buildBundledHistoryResult(bundledSymbol, bundledCandles);
     const candles = toDatedCandles(rawCandles);
     if (candles.length < 500) {
       throw new Error(`Not enough history for market seasonality: ${normalizedSymbol}`);
@@ -771,10 +831,13 @@ export async function fetchMarketSeasonalityOverview(
 
     const overview: MarketSeasonalityOverview = {
       symbol: normalizedSymbol,
-      source: normalizedSymbol.startsWith("^") ? "yahoo index history" : "yahoo/openbb daily history",
+      source: sourceInfo.source,
+      sourceDetail: sourceInfo.sourceDetail,
       fetchedAt: new Date().toISOString(),
       historyYears: Number((candles.length / 252).toFixed(1)),
       tradingDays: candles.length,
+      historyStart: candles[0]?.time,
+      historyEnd: candles[candles.length - 1]?.time,
       monthly,
       weekday,
       eventCycles,
@@ -787,10 +850,7 @@ export async function fetchMarketSeasonalityOverview(
         strongestEvent: [...eventCycles].sort((a, b) => b.avgReturnPct - a.avgReturnPct)[0] ?? null,
         weakestEvent: [...eventCycles].sort((a, b) => a.avgReturnPct - b.avgReturnPct)[0] ?? null,
       },
-      sourceLinks: [
-        { label: "Yahoo History", url: `https://finance.yahoo.com/quote/${encodeURIComponent(normalizedSymbol)}/history` },
-        { label: "TradingView", url: `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(normalizedSymbol)}` },
-      ],
+      sourceLinks: sourceInfo.sourceLinks,
       disclaimer:
         "Die Zyklen sind statistische Rückblicke auf historische Tagesdaten. Sie helfen beim Kontext, ersetzen aber kein Regime-, News- oder Risikomanagement.",
     };
@@ -799,7 +859,7 @@ export async function fetchMarketSeasonalityOverview(
       freshTtlSeconds: MARKET_SEASONALITY_FRESH_TTL_SECONDS,
       staleTtlSeconds: MARKET_SEASONALITY_STALE_TTL_SECONDS,
     });
-    await writePersistentSnapshot("market-seasonality-v2", normalizedSymbol, overview);
+    await writePersistentSnapshot("market-seasonality-v3", normalizedSymbol, overview);
     return overview;
   } catch (error) {
     if (cached.data) {

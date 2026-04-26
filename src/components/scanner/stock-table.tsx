@@ -1,12 +1,12 @@
 "use client";
 
+import { memo } from "react";
 import {
   ChevronDown, ChevronRight, BarChart3, ExternalLink,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
@@ -17,6 +17,7 @@ import { cn } from "@/lib/utils";
 import { MetricTooltip, formatNumber, getRSRatingColor } from "@/components/scanner/metric-tooltip";
 import { StockDetailPanel } from "@/components/scanner/stock-detail-panel";
 import type { StockData } from "@/types/scanner";
+import { useCurrencyFormatter } from "@/hooks/use-currency-formatter";
 
 type SortField = keyof StockData | "none";
 type SortDirection = "asc" | "desc";
@@ -24,14 +25,15 @@ type SortDirection = "asc" | "desc";
 interface StockRowProps {
   stock: StockData;
   isExpanded: boolean;
-  onToggle: () => void;
+  onToggleRow: (symbol: string) => void;
   showEpColumns?: boolean;
   compareMode?: boolean;
   isSelected?: boolean;
-  onSelectChange?: (selected: boolean) => void;
+  onSelectChange?: (symbol: string, selected: boolean) => void;
 }
 
-function StockRow({ stock, isExpanded, onToggle, showEpColumns, compareMode, isSelected, onSelectChange }: StockRowProps) {
+const StockRow = memo(function StockRow({ stock, isExpanded, onToggleRow, showEpColumns, compareMode, isSelected, onSelectChange }: StockRowProps) {
+  const { formatMoney } = useCurrencyFormatter();
   const alignment = stock.stockbee?.qullaAlignment;
   const alignedFrames = [
     alignment?.month1 ? "1M" : null,
@@ -41,10 +43,10 @@ function StockRow({ stock, isExpanded, onToggle, showEpColumns, compareMode, isS
 
   return (
     <>
-      <TableRow className="cursor-pointer hover:bg-zinc-800/50 text-xs font-mono" onClick={onToggle}>
+      <TableRow className="cursor-pointer hover:bg-zinc-800/50 text-xs font-mono" onClick={() => onToggleRow(stock.symbol)}>
         <TableCell className="py-1.5 px-2" onClick={(e) => e.stopPropagation()}>
           {compareMode ? (
-            <Checkbox checked={isSelected} onCheckedChange={(checked: boolean | "indeterminate") => onSelectChange?.(!!checked)} />
+            <Checkbox checked={isSelected} onCheckedChange={(checked: boolean | "indeterminate") => onSelectChange?.(stock.symbol, !!checked)} />
           ) : (
             <Button variant="ghost" size="icon" className="h-5 w-5">
               {isExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
@@ -70,7 +72,7 @@ function StockRow({ stock, isExpanded, onToggle, showEpColumns, compareMode, isS
             {stock.sector !== "Unknown" ? stock.sector : "-"}
           </div>
         </TableCell>
-        <TableCell className="py-1.5 px-2 tabular-nums text-foreground">${formatNumber(stock.price)}</TableCell>
+        <TableCell className="py-1.5 px-2 tabular-nums text-foreground">{formatMoney(stock.price, "USD")}</TableCell>
         <TableCell className="py-1.5 px-2 tabular-nums">
           <span className={cn(stock.changePercent >= 0 ? "text-emerald-500" : "text-red-500")}>
             {stock.changePercent >= 0 ? "+" : ""}{formatNumber(stock.changePercent)}%
@@ -106,6 +108,11 @@ function StockRow({ stock, isExpanded, onToggle, showEpColumns, compareMode, isS
         <TableCell className="py-1.5 px-2 tabular-nums hidden md:table-cell">
           <span className={cn(stock.momentum6M >= 0 ? "text-emerald-500" : "text-red-500")}>
             {stock.momentum6M >= 0 ? "+" : ""}{formatNumber(stock.momentum6M)}%
+          </span>
+        </TableCell>
+        <TableCell className="py-1.5 px-2 tabular-nums hidden lg:table-cell">
+          <span className={cn(stock.momentum1Y >= 0 ? "text-emerald-500" : "text-red-500")}>
+            {stock.momentum1Y >= 0 ? "+" : ""}{formatNumber(stock.momentum1Y)}%
           </span>
         </TableCell>
         <TableCell className="py-1.5 px-2">
@@ -199,14 +206,14 @@ function StockRow({ stock, isExpanded, onToggle, showEpColumns, compareMode, isS
       </TableRow>
       {isExpanded && !compareMode && (
         <TableRow>
-          <TableCell colSpan={showEpColumns ? 16 : 15} className="p-0">
+          <TableCell colSpan={showEpColumns ? 17 : 16} className="p-0">
             <StockDetailPanel stock={stock} />
           </TableCell>
         </TableRow>
       )}
     </>
   );
-}
+});
 
 interface SortHeaderProps {
   field: SortField;
@@ -251,8 +258,8 @@ export function StockTable({
   sortField, sortDirection, onSort,
 }: StockTableProps) {
   return (
-    <ScrollArea className="h-[calc(100dvh-360px)] sm:h-[calc(100vh-320px)]">
-      <div className="rounded-md border min-w-[700px]">
+    <div className="w-full overflow-x-auto overscroll-x-contain rounded-md border">
+      <div className="min-w-[760px]">
         <Table>
           <TableHeader>
             <TableRow>
@@ -274,6 +281,7 @@ export function StockTable({
               <SortHeader field="momentum1M" metricKey="momentum1M" sortField={sortField} sortDirection={sortDirection} onSort={onSort}>1M%</SortHeader>
               <SortHeader field="momentum3M" metricKey="momentum3M" sortField={sortField} sortDirection={sortDirection} onSort={onSort} className="hidden md:table-cell">3M%</SortHeader>
               <SortHeader field="momentum6M" metricKey="momentum6M" sortField={sortField} sortDirection={sortDirection} onSort={onSort} className="hidden md:table-cell">6M%</SortHeader>
+              <SortHeader field="momentum1Y" metricKey="momentum1Y" sortField={sortField} sortDirection={sortDirection} onSort={onSort} className="hidden lg:table-cell">1Y%</SortHeader>
               <SortHeader field="rsRating" metricKey="rsRating" sortField={sortField} sortDirection={sortDirection} onSort={onSort}>RS</SortHeader>
               <SortHeader field="setupScore" metricKey="setupScore" sortField={sortField} sortDirection={sortDirection} onSort={onSort}>Setup</SortHeader>
               <SortHeader field="catalystScore" metricKey="catalystScore" sortField={sortField} sortDirection={sortDirection} onSort={onSort} className="hidden lg:table-cell">Catalyst</SortHeader>
@@ -287,17 +295,16 @@ export function StockTable({
                 key={stock.symbol}
                 stock={stock}
                 isExpanded={expandedRows.has(stock.symbol)}
-                onToggle={() => onToggleRow(stock.symbol)}
+                onToggleRow={onToggleRow}
                 showEpColumns={showEpColumns}
                 compareMode={compareMode}
                 isSelected={selectedForCompare.has(stock.symbol)}
-                onSelectChange={(selected) => onSelectChange(stock.symbol, selected)}
+                onSelectChange={onSelectChange}
               />
             ))}
           </TableBody>
         </Table>
       </div>
-      <ScrollBar orientation="horizontal" />
-    </ScrollArea>
+    </div>
   );
 }

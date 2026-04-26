@@ -42,6 +42,9 @@ export interface MarketSeasonalityOverview {
   fetchedAt: string;
   historyYears: number;
   tradingDays: number;
+  historyStart?: string;
+  historyEnd?: string;
+  sourceDetail?: string;
   monthly: SeasonalityStatBucket[];
   weekday: SeasonalityStatBucket[];
   eventCycles: CycleEventStat[];

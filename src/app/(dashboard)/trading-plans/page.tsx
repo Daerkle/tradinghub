@@ -296,7 +296,7 @@ export default function TradingPlansPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -457,7 +457,7 @@ export default function TradingPlansPage() {
         {/* Empty State / Add New */}
         {plans.length === 0 && (
           <Card className="border-dashed col-span-full">
-            <CardContent className="flex flex-col items-center justify-center py-12">
+            <CardContent className="flex flex-col items-center justify-center py-6">
               <Target className="h-12 w-12 text-muted-foreground mb-4" />
               <h3 className="text-lg font-semibold mb-2">Keine Trading-Pläne</h3>
               <p className="text-muted-foreground text-center mb-4">

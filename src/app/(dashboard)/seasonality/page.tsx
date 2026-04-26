@@ -4,10 +4,10 @@ import { useDeferredValue, useEffect, useState } from "react";
 import {
   AlertCircle,
   CalendarDays,
+  Database,
   Filter,
   Grid3X3,
   Landmark,
-  MousePointerClick,
   RefreshCw,
   Search,
   TrendingUp,
@@ -43,6 +43,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { readClientJsonCache, writeClientJsonCache } from "@/lib/client-json-cache";
 import type {
   MarketSeasonalityOverview,
   SeasonalityCase,
@@ -59,6 +60,8 @@ const PRESETS = [
   { symbol: "XLE", label: "XLE" },
   { symbol: "SMH", label: "SMH" },
 ];
+
+const SEASONALITY_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 const REFERENCE_SOURCES = [
   {
@@ -121,15 +124,151 @@ const REFERENCE_SOURCES = [
     url: "https://www.tradingview.com/chart/?symbol=SP:SPX",
     note: "Chartansicht zum Nachvollziehen der historischen Phasen und Tiefs.",
   },
+  {
+    title: "Polygon Aggregates",
+    category: "Pro-Daten",
+    url: "https://polygon.io/docs/rest/stocks/aggregates/custom-bars",
+    note: "Offizielle OHLCV-Aggregate für historische Tagesbars und intraday Bars.",
+  },
+  {
+    title: "Nasdaq Data Link",
+    category: "Pro-Daten",
+    url: "https://docs.data.nasdaq.com/docs/getting-started",
+    note: "Datenmarktplatz mit APIs für historische, verzögerte und Echtzeit-Datenprodukte.",
+  },
+  {
+    title: "Alpha Vantage Daily Adjusted",
+    category: "API",
+    url: "https://www.alphavantage.co/documentation/",
+    note: "Daily Adjusted OHLCV inklusive Split- und Dividenden-Adjustments.",
+  },
+  {
+    title: "EODHD End-of-Day",
+    category: "API",
+    url: "https://eodhd.com/knowledgebase/",
+    note: "EOD-, Delayed- und historische Preisdaten mit globaler Aktien- und ETF-Abdeckung.",
+  },
 ];
 
 const FILTERS = [
   { key: "all", label: "Alles" },
   { key: "month", label: "Monate" },
-  { key: "event", label: "Zyklen" },
-  { key: "weekday", label: "Wochentage" },
-  { key: "cycle", label: "Wahlzyklus" },
+  { key: "event", label: "Wochen/Fenster" },
+  { key: "weekday", label: "Tage" },
+  { key: "cycle", label: "Wahljahre" },
 ] as const;
+
+const MONTH_LABELS = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"];
+const WEEKDAY_LABELS = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"];
+
+const METHOD_SUMMARY = [
+  {
+    label: "Monate",
+    value: "1 Monatsreturn pro Jahr",
+    detail: "Zeigt, ob ein kompletter Kalendermonat historisch Rückenwind oder Gegenwind hatte.",
+  },
+  {
+    label: "Wochen/Fenster",
+    value: "3-10 Handelstage",
+    detail: "Turn of Month, OpEx, Earnings, Santa Rally und Quartalsfenster werden als echte Handelsfenster gemessen.",
+  },
+  {
+    label: "Tage",
+    value: "einzelne Tagesreturns",
+    detail: "Wochentage zeigen Timing-Bias, aber keine eigenständige Marktmeinung.",
+  },
+  {
+    label: "Jahre",
+    value: "US-Wahlzyklus",
+    detail: "Post-Election, Midterm, Pre-Election und Election werden als Jahrestypen verglichen.",
+  },
+];
+
+const SEASONALITY_GLOSSARY: Array<{
+  labels: string[];
+  title: string;
+  short: string;
+  details: string;
+}> = [
+  {
+    labels: ["Turn of Month"],
+    title: "Turn of Month",
+    short: "Letzter Handelstag des alten Monats plus die ersten Handelstage des neuen Monats.",
+    details: "Dieses Fenster wird oft untersucht, weil zum Monatswechsel Gehalts-, Sparplan- und Fondsflüsse in den Markt laufen können.",
+  },
+  {
+    labels: ["Turn of Quarter"],
+    title: "Turn of Quarter",
+    short: "Letzte Handelstage eines Quartals plus die ersten des neuen Quartals.",
+    details: "Ähnlich wie Turn of Month, nur auf Quartalsebene. Kann durch Rebalancing, Window Dressing und institutionelle Umschichtungen beeinflusst sein.",
+  },
+  {
+    labels: ["Monatsstart", "Erster Handelstag", "Erste Woche", "Erste Monatshälfte"],
+    title: "Monatsstart-Fenster",
+    short: "Frühe Handelstage eines Monats.",
+    details: "Hier schaut man, ob ein Markt zu Beginn eines Monats typischerweise stärker oder schwächer läuft als im Rest des Monats.",
+  },
+  {
+    labels: ["Monatsende", "Letzter Handelstag", "Letzte Woche", "Zweite Monatshälfte"],
+    title: "Monatsende-Fenster",
+    short: "Spätere Handelstage eines Monats.",
+    details: "Hilft beim Vergleich, ob Stärke eher früh oder spät im Monatsverlauf auftritt.",
+  },
+  {
+    labels: ["January Effect", "Erste 5 Tage Januar"],
+    title: "January Effect",
+    short: "Die Idee, dass Januar oder die ersten Januar-Tage besonders stark sein können.",
+    details: "Historisch wird oft untersucht, ob frische Jahresallokationen, Steuer-Effekte und neue Positionierungen zu besonderer Stärke zum Jahresanfang führen.",
+  },
+  {
+    labels: ["OpEx-Woche", "OpEx-Freitag", "OpEx-Folgewoche"],
+    title: "OpEx",
+    short: "Options Expiration, also der Verfallstag bzw. die Verfallswoche von Optionen.",
+    details: "Dabei schaut man, ob Verfallstermine und das Abwickeln von Optionspositionen den Markt kurzfristig beeinflussen.",
+  },
+  {
+    labels: ["Triple Witching"],
+    title: "Triple Witching",
+    short: "Quartalsverfall in März, Juni, September und Dezember.",
+    details: "An diesen Terminen laufen mehrere Derivate-Arten gleichzeitig aus. Dadurch können Volumen und kurzfristige Kursverzerrungen steigen.",
+  },
+  {
+    labels: ["Earnings Season"],
+    title: "Earnings Season",
+    short: "Die ersten Wochen einer Quartalsberichtssaison.",
+    details: "Hier wird gemessen, ob Märkte in typischen Berichtssaisons überdurchschnittlich stark oder schwach tendieren.",
+  },
+  {
+    labels: ["Santa Rally"],
+    title: "Santa Rally",
+    short: "Letzte Handelstage im Dezember plus die ersten Handelstage im Januar.",
+    details: "Ein bekanntes saisonales Fenster rund um Jahresende, das oft mit dünneren Märkten, positiver Stimmung und frischen Zuflüssen begründet wird.",
+  },
+  {
+    labels: ["Nov bis Apr", "Mai bis Okt"],
+    title: "Halloween-Effekt",
+    short: "Vergleich des Winterhalbjahrs gegen das Sommerhalbjahr.",
+    details: "Die bekannte Faustregel dahinter ist sinngemäß 'Sell in May'. Gemessen wird, ob November bis April historisch stärker war als Mai bis Oktober.",
+  },
+  {
+    labels: ["FOMC-Fenster", "FOMC -1", "FOMC +1", "FOMC +2"],
+    title: "FOMC",
+    short: "Sitzung der US-Notenbank Fed, bei der Zinsentscheidungen und geldpolitische Signale kommen.",
+    details: "Diese Fenster messen, wie sich Märkte vor und nach Fed-Terminen im Durchschnitt verhalten haben.",
+  },
+  {
+    labels: ["Post-Election", "Midterm", "Pre-Election", "Election", "Midterm Drawdowns & Recoveries"],
+    title: "US-Wahlzyklus",
+    short: "Vierjahreszyklus innerhalb einer US-Präsidentschaft.",
+    details: "Dabei wird verglichen, wie Märkte in Post-Election-, Midterm-, Pre-Election- und Election-Jahren historisch gelaufen sind.",
+  },
+  {
+    labels: ["Mo", "Di", "Mi", "Do", "Fr"],
+    title: "Wochentagseffekt",
+    short: "Vergleich der durchschnittlichen Renditen nach Handelstag.",
+    details: "Damit sieht man, ob bestimmte Wochentage historisch häufiger Stärke oder Schwäche gezeigt haben.",
+  },
+];
 
 type InsightGroup = "month" | "event" | "weekday" | "cycle";
 type InsightFilter = (typeof FILTERS)[number]["key"];
@@ -211,6 +350,31 @@ function formatPeriod(startDate: string, endDate: string): string {
   return `${startDate} bis ${endDate}`;
 }
 
+function formatDateLabel(value: string | null | undefined): string {
+  if (!value) return "-";
+  const date = new Date(`${value}T00:00:00Z`);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString("de-DE", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+}
+
+function formatDateTimeLabel(value: string | null | undefined): string {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString("de-DE", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 function average(values: number[]): number | null {
   if (values.length === 0) return null;
   return values.reduce((sum, value) => sum + value, 0) / values.length;
@@ -227,6 +391,135 @@ function standardDeviation(values: number[]): number | null {
 function shortenLabel(label: string, maxLength = 18): string {
   if (label.length <= maxLength) return label;
   return `${label.slice(0, maxLength - 1)}…`;
+}
+
+function sampleQuality(sampleSize: number, sampleUnit: string): { label: string; className: string } {
+  const robustLimit = sampleUnit === "Handelstage" ? 120 : sampleUnit === "Fenster" ? 30 : 12;
+  const usefulLimit = sampleUnit === "Handelstage" ? 60 : sampleUnit === "Fenster" ? 12 : 8;
+  if (sampleSize >= robustLimit) {
+    return { label: "belastbar", className: "border-emerald-500/40 text-emerald-700 dark:text-emerald-300" };
+  }
+  if (sampleSize >= usefulLimit) {
+    return { label: "brauchbar", className: "border-amber-500/50 text-amber-700 dark:text-amber-300" };
+  }
+  return { label: "dünn", className: "border-rose-500/50 text-rose-700 dark:text-rose-300" };
+}
+
+function getThirdFridayDay(year: number, month: number): number {
+  let fridayCount = 0;
+  for (let day = 1; day <= 31; day++) {
+    const date = new Date(year, month, day);
+    if (date.getMonth() !== month) break;
+    if (date.getDay() === 5) fridayCount += 1;
+    if (fridayCount === 3) return day;
+  }
+  return 0;
+}
+
+function addUniqueSlug(slugs: string[], slug: string) {
+  if (!slugs.includes(slug)) slugs.push(slug);
+}
+
+function currentEventSlugs(date: Date): string[] {
+  const slugs: string[] = [];
+  const year = date.getFullYear();
+  const month = date.getMonth();
+  const day = date.getDate();
+  const lastDay = new Date(year, month + 1, 0).getDate();
+
+  if (day <= 3) addUniqueSlug(slugs, "turn-of-month");
+  if (day <= 7) {
+    addUniqueSlug(slugs, "month-start");
+    addUniqueSlug(slugs, "first-week");
+  }
+  if (day >= lastDay - 2) addUniqueSlug(slugs, "month-end");
+  if (day >= lastDay - 6) addUniqueSlug(slugs, "last-week");
+
+  if ([0, 3, 6, 9].includes(month) && day <= 15) addUniqueSlug(slugs, "earnings-season");
+  if ([0, 3, 6, 9].includes(month) && day <= 7) addUniqueSlug(slugs, "quarter-start-week");
+  if ([2, 5, 8, 11].includes(month) && day >= lastDay - 6) addUniqueSlug(slugs, "quarter-end-week");
+  if (month === 0 && day <= 10) {
+    addUniqueSlug(slugs, "january-effect");
+    addUniqueSlug(slugs, "first-five-january");
+  }
+  if ((month === 11 && day >= 22) || (month === 0 && day <= 5)) addUniqueSlug(slugs, "santa-rally");
+  if (month >= 10 || month <= 3) addUniqueSlug(slugs, "nov-apr");
+  if (month >= 4 && month <= 9) addUniqueSlug(slugs, "may-oct");
+
+  const thirdFriday = getThirdFridayDay(year, month);
+  if (thirdFriday > 0) {
+    const diffDays = Math.floor(
+      (new Date(year, month, day).getTime() - new Date(year, month, thirdFriday).getTime()) / (24 * 60 * 60 * 1000)
+    );
+    if (diffDays >= -4 && diffDays <= 0) addUniqueSlug(slugs, "opex-week");
+    if (diffDays === 0) addUniqueSlug(slugs, "opex-friday");
+    if (diffDays > 0 && diffDays <= 7) addUniqueSlug(slugs, "opex-next-week");
+    if ([2, 5, 8, 11].includes(month) && diffDays >= -4 && diffDays <= 0) addUniqueSlug(slugs, "triple-witching");
+  }
+
+  return slugs;
+}
+
+type CalendarInsight = {
+  id: string;
+  label: string;
+  type: string;
+  reason: string;
+  avgReturnPct: number | null;
+  positiveRatePct: number | null;
+  sampleSize: number;
+  sampleUnit: string;
+};
+
+function buildCurrentCalendarInsights(data: MarketSeasonalityOverview | null, date: Date | null): CalendarInsight[] {
+  if (!data || !date) return [];
+  const items: CalendarInsight[] = [];
+  const monthLabel = MONTH_LABELS[date.getMonth()];
+  const monthBucket = data.monthly.find((bucket) => bucket.label === monthLabel);
+  if (monthBucket) {
+    items.push({
+      id: `month:${monthBucket.label}`,
+      label: monthBucket.label,
+      type: "Monat",
+      reason: "aktueller Kalendermonat",
+      avgReturnPct: monthBucket.avgReturnPct,
+      positiveRatePct: monthBucket.positiveRatePct,
+      sampleSize: monthBucket.sampleSize,
+      sampleUnit: monthBucket.sampleUnit ?? "Jahre",
+    });
+  }
+
+  const weekdayLabel = WEEKDAY_LABELS[date.getDay()];
+  const weekdayBucket = data.weekday.find((bucket) => bucket.label === weekdayLabel);
+  if (weekdayBucket) {
+    items.push({
+      id: `weekday:${weekdayBucket.label}`,
+      label: weekdayBucket.label,
+      type: "Tag",
+      reason: "aktueller Wochentag",
+      avgReturnPct: weekdayBucket.avgReturnPct,
+      positiveRatePct: weekdayBucket.positiveRatePct,
+      sampleSize: weekdayBucket.sampleSize,
+      sampleUnit: weekdayBucket.sampleUnit ?? "Handelstage",
+    });
+  }
+
+  for (const slug of currentEventSlugs(date)) {
+    const cycle = data.eventCycles.find((item) => item.slug === slug);
+    if (!cycle) continue;
+    items.push({
+      id: `event:${cycle.slug}`,
+      label: cycle.label,
+      type: "Fenster",
+      reason: "kalendernahes Wochen-/Eventfenster",
+      avgReturnPct: cycle.avgReturnPct,
+      positiveRatePct: cycle.positiveRatePct,
+      sampleSize: cycle.sampleSize,
+      sampleUnit: cycle.sampleUnit ?? "Fenster",
+    });
+  }
+
+  return items;
 }
 
 function buildInsightFromBucket(
@@ -247,6 +540,89 @@ function buildInsightFromBucket(
     sampleSize: bucket.sampleSize,
     sampleUnit: bucket.sampleUnit ?? fallbackUnit,
     cases: bucket.cases ?? [],
+  };
+}
+
+function getGlossaryEntry(label: string | null | undefined) {
+  if (!label) return null;
+  const normalized = label.toLowerCase().trim();
+  return (
+    SEASONALITY_GLOSSARY.find((entry) =>
+      entry.labels.some((candidate) => candidate.toLowerCase() === normalized)
+    ) ?? null
+  );
+}
+
+function buildInsightGuidance(insight: SeasonalityInsight | null, dispersionPct: number | null) {
+  if (!insight) return null;
+
+  const avg = insight.avgReturnPct ?? 0;
+  const median = insight.medianReturnPct ?? 0;
+  const positiveRate = insight.positiveRatePct ?? 0;
+  const sampleSize = insight.sampleSize;
+  const sampleIsRobust =
+    insight.sampleUnit === "Handelstage"
+      ? sampleSize >= 120
+      : insight.sampleUnit === "Fenster"
+        ? sampleSize >= 30
+        : sampleSize >= 12;
+  const stable = typeof dispersionPct === "number" ? dispersionPct < 4 : false;
+  const supportive = avg > 0 && median > 0 && positiveRate >= 55;
+  const strongSupport = avg > 0 && median > 0 && positiveRate >= 60 && sampleIsRobust;
+  const headwind = avg < 0 && median <= 0 && positiveRate < 50;
+
+  const useCase =
+    insight.group === "weekday"
+      ? "Für Timing und Tagesgewichtung. Nicht als alleinige Marktmeinung."
+      : insight.group === "cycle"
+        ? "Als Makro-Kontext für Wahljahre und Regime, nicht für Intraday-Einstiege."
+        : "Als Kontextfilter für Bias, Watchlist und Positionsgröße.";
+
+  if (strongSupport) {
+    return {
+      badge: "Nützlich",
+      headline: "Statistischer Rückenwind",
+      summary: "Das Muster war historisch mehrheitlich positiv und der Median bestätigt den Durchschnitt.",
+      useCase,
+      caution: stable
+        ? "Trotzdem kein Einstiegssignal. Nutze es als Rückenwind für Setups, die technisch und fundamental passen."
+        : "Der Rückenwind ist da, aber die Schwankung zwischen den Jahren war spürbar. Also nicht blind darauf verlassen.",
+    };
+  }
+
+  if (headwind) {
+    return {
+      badge: "Vorsicht",
+      headline: "Eher Gegenwind",
+      summary: "Historisch war dieses Fenster eher schwach. Durchschnitt, Median und Positivquote sprechen nicht für Rückenwind.",
+      useCase:
+        insight.group === "weekday"
+          ? "Nützlich, um schwächere Tage eher defensiv zu handeln oder zu meiden."
+          : "Nützlich, um Longs kritischer zu filtern oder Gewinne schneller zu sichern.",
+      caution: sampleIsRobust
+        ? "Das ist ein brauchbarer Warnhinweis, aber kein Short-Signal für sich allein."
+        : "Das Muster wirkt schwach, aber die Stichprobe ist nicht groß genug für harte Regeln.",
+    };
+  }
+
+  if (supportive) {
+    return {
+      badge: "Kontext",
+      headline: "Positiv, aber nicht glasklar",
+      summary: "Es gibt einen positiven Bias, aber nicht stark genug für ein aggressives Urteil.",
+      useCase,
+      caution: sampleIsRobust
+        ? "Gut als Zusatzfilter, aber nicht stark genug, um allein Entscheidungen darauf aufzubauen."
+        : "Kleine oder mittlere Stichprobe. Eher als Hintergrundwissen nutzen.",
+    };
+  }
+
+  return {
+    badge: "Neutral",
+    headline: "Gemischtes Muster",
+    summary: "Die Kennzahlen widersprechen sich oder liefern kein klares Bild.",
+    useCase: "Hilft eher beim Einordnen als beim Handeln. Andere Signale sollten hier klar wichtiger sein.",
+    caution: "Wenn Durchschnitt und Median auseinanderlaufen oder die Positivquote nur um 50% liegt, ist das meist kein belastbarer Edge.",
   };
 }
 
@@ -481,16 +857,16 @@ function SeasonalityHeatmap({
   onSelect: (id: string) => void;
 }) {
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Grid3X3 className="h-5 w-5" />
+    <Card className="min-w-0 overflow-hidden">
+      <CardHeader className="pb-2 sm:pb-3">
+        <CardTitle className="flex items-center gap-2 text-base sm:text-lg">
+          <Grid3X3 className="h-4 w-4 sm:h-5 sm:w-5" />
           {title}
         </CardTitle>
-        <CardDescription>{description}</CardDescription>
+        <CardDescription className="text-xs sm:text-sm">{description}</CardDescription>
       </CardHeader>
       <CardContent>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-4">
+        <div className="grid min-w-0 grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
           {items.map((item) => (
             <button
               key={item.id}
@@ -498,13 +874,15 @@ function SeasonalityHeatmap({
               aria-label={`${title}: ${item.label}`}
               title={`${title}: ${item.label}`}
               onClick={() => onSelect(item.id)}
-              className={`rounded-xl border p-3 text-left transition-all hover:border-primary/60 ${
+              className={`min-h-[72px] rounded-md border px-2.5 py-2 text-left transition-all hover:border-primary/60 sm:min-h-[80px] ${
                 item.id === selectedId ? "ring-2 ring-primary/70" : ""
               } ${heatClass(item.value)}`}
             >
-              <div className="text-xs opacity-80">{item.label}</div>
-              <div className="mt-1 text-lg font-semibold">{formatPct(item.value, 2)}</div>
-              {item.sublabel ? <div className="mt-1 text-xs opacity-80">{item.sublabel}</div> : null}
+              <div className="break-words text-[11px] leading-tight opacity-85 sm:text-xs">{item.label}</div>
+              <div className="mt-1 text-sm font-semibold sm:text-base">{formatPct(item.value, 2)}</div>
+              {item.sublabel ? (
+                <div className="mt-1 line-clamp-2 text-[10px] leading-tight opacity-80 sm:text-[11px]">{item.sublabel}</div>
+              ) : null}
             </button>
           ))}
         </div>
@@ -527,25 +905,45 @@ export default function SeasonalityPage() {
   const [insightDialogOpen, setInsightDialogOpen] = useState(false);
   const [caseQuery, setCaseQuery] = useState("");
   const [selectedEventSlugs, setSelectedEventSlugs] = useState<string[]>([]);
+  const [calendarIso, setCalendarIso] = useState<string | null>(null);
   const deferredInsightQuery = useDeferredValue(insightQuery);
   const deferredCaseQuery = useDeferredValue(caseQuery);
+
+  useEffect(() => {
+    setCalendarIso(new Date().toISOString());
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
 
     async function load() {
-      try {
+      const cacheKey = `seasonality:v2:${activeSymbol}`;
+      const cached = readClientJsonCache<MarketSeasonalityOverview>(cacheKey, {
+        maxAgeMs: SEASONALITY_MAX_AGE_MS,
+        allowStale: true,
+      });
+
+      if (cached) {
+        setData(cached.data);
+        setIsLoading(false);
+      } else {
         setIsLoading(true);
+      }
+
+      try {
         setError(null);
         const response = await fetch(`/api/seasonality/market/${encodeURIComponent(activeSymbol)}`);
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}`);
         }
         const payload = (await response.json()) as MarketSeasonalityOverview;
-        if (!cancelled) setData(payload);
+        if (!cancelled) {
+          setData(payload);
+          writeClientJsonCache(cacheKey, payload);
+        }
       } catch (loadError) {
         console.error("Failed to load market seasonality", loadError);
-        if (!cancelled) {
+        if (!cancelled && !cached) {
           setData(null);
           setError("Saisonalitäten konnten nicht geladen werden.");
         }
@@ -564,8 +962,20 @@ export default function SeasonalityPage() {
     let cancelled = false;
 
     async function loadComparison() {
-      try {
+      const cacheKey = "seasonality:v2:comparison";
+      const cached = readClientJsonCache<ComparisonEntry[]>(cacheKey, {
+        maxAgeMs: SEASONALITY_MAX_AGE_MS,
+        allowStale: true,
+      });
+
+      if (cached) {
+        setComparison(cached.data);
+        setComparisonLoading(false);
+      } else {
         setComparisonLoading(true);
+      }
+
+      try {
         const rows = await Promise.all(
           PRESETS.map(async (preset) => {
             const response = await fetch(`/api/seasonality/market/${encodeURIComponent(preset.symbol)}`);
@@ -589,10 +999,13 @@ export default function SeasonalityPage() {
           })
         );
 
-        if (!cancelled) setComparison(rows);
+        if (!cancelled) {
+          setComparison(rows);
+          writeClientJsonCache(cacheKey, rows);
+        }
       } catch (comparisonError) {
         console.error("Failed to load seasonality comparison", comparisonError);
-        if (!cancelled) setComparison([]);
+        if (!cancelled && !cached) setComparison([]);
       } finally {
         if (!cancelled) setComparisonLoading(false);
       }
@@ -657,11 +1070,16 @@ export default function SeasonalityPage() {
       })) ?? [];
   const topPositiveCases = selectedInsight?.cases.slice().sort((a, b) => b.returnPct - a.returnPct).slice(0, 5) ?? [];
   const topNegativeCases = selectedInsight?.cases.slice().sort((a, b) => a.returnPct - b.returnPct).slice(0, 5) ?? [];
+  const selectedInsightGuidance = buildInsightGuidance(selectedInsight, selectedCaseStats.dispersionPct);
   const selectedEvents =
     data?.eventCycles
       .filter((cycle) => selectedEventSlugs.includes(cycle.slug))
       .sort((a, b) => selectedEventSlugs.indexOf(a.slug) - selectedEventSlugs.indexOf(b.slug)) ?? [];
   const selectedEventAlignment = buildEventAlignmentMatrix(selectedEvents);
+  const bestPresidentialCycle =
+    data?.presidentialCycle.summary.slice().sort((a, b) => b.avgReturnPct - a.avgReturnPct)[0] ?? null;
+  const currentCalendarDate = calendarIso ? new Date(calendarIso) : null;
+  const currentCalendarInsights = buildCurrentCalendarInsights(data, currentCalendarDate);
 
   useEffect(() => {
     if (!data) {
@@ -713,7 +1131,7 @@ export default function SeasonalityPage() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="min-w-0 max-w-full space-y-4 overflow-x-hidden [&_[data-slot=card]]:min-w-0 [&_[data-slot=card]]:overflow-hidden [&_[data-slot=card-content]]:min-w-0 [&_[data-slot=table-container]]:max-w-full">
       <Dialog open={insightDialogOpen && Boolean(selectedInsight)} onOpenChange={setInsightDialogOpen}>
         <DialogContent className="max-h-[92dvh] max-w-4xl overflow-hidden p-0 sm:max-w-4xl">
           {selectedInsight ? (
@@ -723,25 +1141,33 @@ export default function SeasonalityPage() {
                 <DialogDescription>{selectedInsight.description}</DialogDescription>
               </DialogHeader>
 
-              <div className="flex-1 space-y-6 overflow-y-auto px-5 py-4 sm:px-6">
+              <div className="flex-1 space-y-4 overflow-y-auto px-5 py-4 sm:px-6">
+                {getGlossaryEntry(selectedInsight.label) ? (
+                  <div className="rounded-md border border-sky-500/20 bg-sky-500/10 p-4 text-sm">
+                    <div className="font-medium">{getGlossaryEntry(selectedInsight.label)?.title}</div>
+                    <div className="mt-1 text-muted-foreground">{getGlossaryEntry(selectedInsight.label)?.short}</div>
+                    <div className="mt-2 text-muted-foreground">{getGlossaryEntry(selectedInsight.label)?.details}</div>
+                  </div>
+                ) : null}
+
                 <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                  <div className="rounded-xl border p-4">
+                  <div className="rounded-md border p-3">
                     <div className="text-sm text-muted-foreground">Durchschnitt</div>
                     <div className={`mt-2 text-2xl font-semibold ${toneClass(selectedInsight.avgReturnPct)}`}>
                       {formatPct(selectedInsight.avgReturnPct, 2)}
                     </div>
                   </div>
-                  <div className="rounded-xl border p-4">
+                  <div className="rounded-md border p-3">
                     <div className="text-sm text-muted-foreground">Median</div>
                     <div className={`mt-2 text-2xl font-semibold ${toneClass(selectedInsight.medianReturnPct)}`}>
                       {formatPct(selectedInsight.medianReturnPct, 2)}
                     </div>
                   </div>
-                  <div className="rounded-xl border p-4">
+                  <div className="rounded-md border p-3">
                     <div className="text-sm text-muted-foreground">Positivquote</div>
                     <div className="mt-2 text-2xl font-semibold">{formatPct(selectedInsight.positiveRatePct, 0)}</div>
                   </div>
-                  <div className="rounded-xl border p-4">
+                  <div className="rounded-md border p-3">
                     <div className="text-sm text-muted-foreground">Historische Fälle</div>
                     <div className="mt-2 text-2xl font-semibold">
                       {formatCount(selectedInsight.sampleSize, selectedInsight.sampleUnit)}
@@ -749,7 +1175,7 @@ export default function SeasonalityPage() {
                   </div>
                 </div>
 
-                <div className="rounded-xl border p-4 text-sm text-muted-foreground">
+                <div className="rounded-md border p-3 text-sm text-muted-foreground">
                   <div>
                     `Historische Fälle` ist die echte Stichprobe hinter der Zahl. Du siehst also keine Behauptung, sondern
                     eine Auswertung über {formatCount(selectedInsight.sampleSize, selectedInsight.sampleUnit)}.
@@ -761,7 +1187,7 @@ export default function SeasonalityPage() {
                   </div>
                 </div>
 
-                <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
+                <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
                   <Card>
                     <CardHeader>
                       <CardTitle>Fallverlauf</CardTitle>
@@ -769,7 +1195,7 @@ export default function SeasonalityPage() {
                         Zeitlicher Verlauf der historischen Fälle des ausgewählten Musters.
                       </CardDescription>
                     </CardHeader>
-                    <CardContent className="h-[300px] sm:h-[360px]">
+                    <CardContent className="h-[300px] sm:h-[300px]">
                       {selectedCaseChartData.length > 0 ? (
                         <ResponsiveContainer width="100%" height="100%">
                           <BarChart data={selectedCaseChartData}>
@@ -818,28 +1244,28 @@ export default function SeasonalityPage() {
                       <CardDescription>Stabilität und Extremfälle des ausgewählten Musters.</CardDescription>
                     </CardHeader>
                     <CardContent className="grid gap-3 sm:grid-cols-2">
-                      <div className="rounded-xl border p-4">
+                      <div className="rounded-md border p-3">
                         <div className="text-sm text-muted-foreground">Bester Fall</div>
                         <div className={`mt-2 text-xl font-semibold ${toneClass(selectedCaseStats.bestCase?.returnPct)}`}>
                           {formatPct(selectedCaseStats.bestCase?.returnPct, 2)}
                         </div>
                         <div className="mt-1 text-sm text-muted-foreground">{selectedCaseStats.bestCase?.label ?? "-"}</div>
                       </div>
-                      <div className="rounded-xl border p-4">
+                      <div className="rounded-md border p-3">
                         <div className="text-sm text-muted-foreground">Schlechtester Fall</div>
                         <div className={`mt-2 text-xl font-semibold ${toneClass(selectedCaseStats.worstCase?.returnPct)}`}>
                           {formatPct(selectedCaseStats.worstCase?.returnPct, 2)}
                         </div>
                         <div className="mt-1 text-sm text-muted-foreground">{selectedCaseStats.worstCase?.label ?? "-"}</div>
                       </div>
-                      <div className="rounded-xl border p-4">
+                      <div className="rounded-md border p-3">
                         <div className="text-sm text-muted-foreground">Streuung</div>
                         <div className="mt-2 text-xl font-semibold">{formatPct(selectedCaseStats.dispersionPct, 2)}</div>
                         <div className="mt-1 text-sm text-muted-foreground">
                           Hohe Streuung heißt: das Muster war historisch deutlich ungleichmäßiger.
                         </div>
                       </div>
-                      <div className="rounded-xl border p-4">
+                      <div className="rounded-md border p-3">
                         <div className="text-sm text-muted-foreground">Ø letzte 5 Fälle</div>
                         <div className={`mt-2 text-xl font-semibold ${toneClass(selectedCaseStats.recentAveragePct)}`}>
                           {formatPct(selectedCaseStats.recentAveragePct, 2)}
@@ -870,7 +1296,7 @@ export default function SeasonalityPage() {
                           className="pl-9"
                         />
                       </div>
-                      <div className="max-h-[42dvh] overflow-y-auto rounded-xl border">
+                      <div className="max-h-[42dvh] overflow-y-auto rounded-md border">
                         <div className="overflow-x-auto">
                           <Table>
                             <TableHeader className="sticky top-0 z-10 bg-background">
@@ -910,7 +1336,7 @@ export default function SeasonalityPage() {
                   </Card>
                 ) : null}
 
-                <div className="grid gap-6 xl:grid-cols-2">
+                <div className="grid gap-4 xl:grid-cols-2">
                   <Card>
                     <CardHeader>
                       <CardTitle>Top-Fälle</CardTitle>
@@ -975,29 +1401,35 @@ export default function SeasonalityPage() {
         </DialogContent>
       </Dialog>
 
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+      <div className="flex flex-col gap-2 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <h1 className="text-2xl font-bold sm:text-3xl">Saisonalitäten</h1>
-          <p className="mt-1 text-muted-foreground">
+          <h1 className="text-lg font-bold sm:text-2xl">Saisonalitäten</h1>
+          <p className="hidden text-sm text-muted-foreground sm:mt-1 sm:block">
             Wahlzyklen, Kalendereffekte und typische Marktfenster wie Turn of Month oder Santa Rally.
           </p>
         </div>
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+        <div className="flex flex-row gap-2 sm:items-center">
           <Input
             value={symbolInput}
             onChange={(event) => setSymbolInput(event.target.value.toUpperCase())}
             placeholder="z. B. ^GSPC oder QQQ"
-            className="w-full sm:w-48"
+            className="h-9 min-w-0 flex-1 sm:w-48 sm:flex-none"
           />
-          <Button onClick={() => handleSymbolLoad(symbolInput)} disabled={isLoading}>
-            {isLoading ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : null}
-            Laden
+          <Button
+            onClick={() => handleSymbolLoad(symbolInput)}
+            disabled={isLoading}
+            size="sm"
+            className="h-9 shrink-0 px-2.5 sm:px-3"
+            aria-label="Saisonalitäten laden"
+          >
+            <RefreshCw className={`h-4 w-4 sm:mr-2 ${isLoading ? "animate-spin" : ""}`} />
+            <span className="hidden sm:inline">Laden</span>
           </Button>
         </div>
       </div>
 
       <div className="overflow-x-auto pb-1">
-        <div className="flex min-w-max gap-2">
+        <div className="inline-flex gap-2 whitespace-nowrap">
           {PRESETS.map((preset) => (
             <Button
               key={preset.symbol}
@@ -1022,113 +1454,188 @@ export default function SeasonalityPage() {
 
       {data ? (
         <>
-          <div className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
+          <div className="grid gap-3 xl:grid-cols-[1.05fr_0.95fr]">
             <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <MousePointerClick className="h-5 w-5" />
-                  Wie du diese Seite liest
+              <CardHeader className="pb-2 sm:pb-3">
+                <CardTitle className="flex items-center gap-2 text-base sm:text-lg">
+                  <Database className="h-4 w-4 sm:h-5 sm:w-5" />
+                  Datenbasis & Logik
                 </CardTitle>
-                <CardDescription>
-                  Die Seite ist jetzt klickbar. Wähle oben einen Markt, filtere unten nach Monat, Zyklus oder Wahljahr und
-                  klicke eine Kachel oder Tabellenzeile an.
+                <CardDescription className="text-xs sm:text-sm">
+                  {data.symbol}: {formatDateLabel(data.historyStart)} bis {formatDateLabel(data.historyEnd)}.
                 </CardDescription>
               </CardHeader>
-              <CardContent className="grid gap-3 md:grid-cols-2">
-                <div className="rounded-xl border p-4">
-                  <div className="text-sm text-muted-foreground">Historische Fälle</div>
-                  <div className="mt-2 font-medium">
-                    `Samples` heißt hier: wie oft dieses Muster in der Historie wirklich vorkam.
+              <CardContent className="space-y-3">
+                <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+                  <div className="rounded-md border p-2.5">
+                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Historie</div>
+                    <div className="mt-1 text-base font-semibold">{data.historyYears} Jahre</div>
+                    <div className="text-xs text-muted-foreground">{data.tradingDays} Handelstage</div>
                   </div>
-                  <div className="mt-2 text-sm text-muted-foreground">
-                    Beispiel: `33 Jahre` beim Januar, `398 Fenster` beim Turn of Month, `42 Fenster` beim FOMC-Fenster.
+                  <div className="rounded-md border p-2.5">
+                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Quelle</div>
+                    <div className="mt-1 line-clamp-2 text-sm font-semibold">{data.source}</div>
+                    <div className="line-clamp-2 text-xs text-muted-foreground">{data.sourceDetail ?? "Tägliche OHLCV-Historie"}</div>
+                  </div>
+                  <div className="rounded-md border p-2.5">
+                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Datenstand</div>
+                    <div className="mt-1 text-sm font-semibold">{formatDateTimeLabel(data.fetchedAt)}</div>
+                    <div className="text-xs text-muted-foreground">Servercache + lokaler Browsercache</div>
+                  </div>
+                  <div className="rounded-md border p-2.5">
+                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Lesart</div>
+                    <div className="mt-1 text-sm font-semibold">Ø + Median + Positivquote</div>
+                    <div className="text-xs text-muted-foreground">Ausreißer werden sichtbar statt versteckt.</div>
                   </div>
                 </div>
-                <div className="rounded-xl border p-4">
-                  <div className="text-sm text-muted-foreground">Durchschnitt vs. Median</div>
-                  <div className="mt-2 font-medium">
-                    Durchschnitt ist der Mittelwert aller Fälle. Median ist der mittlere Fall und robuster gegen Ausreißer.
-                  </div>
-                  <div className="mt-2 text-sm text-muted-foreground">
-                    Wenn beide ähnlich sind, ist das Muster meist sauberer. Wenn sie stark abweichen, verzerren einzelne Jahre.
-                  </div>
+
+                <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                  {METHOD_SUMMARY.map((item) => (
+                    <div key={item.label} className="rounded-md border bg-muted/20 p-2.5">
+                      <div className="font-medium">{item.label}</div>
+                      <Badge variant="outline" className="mt-1 max-w-full whitespace-normal text-left text-[10px] leading-tight">
+                        {item.value}
+                      </Badge>
+                      <div className="mt-1 text-xs leading-relaxed text-muted-foreground">{item.detail}</div>
+                    </div>
+                  ))}
                 </div>
               </CardContent>
             </Card>
 
             <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Landmark className="h-5 w-5" />
-                  Markt-Kontext
+              <CardHeader className="pb-2 sm:pb-3">
+                <CardTitle className="flex items-center gap-2 text-base sm:text-lg">
+                  <Landmark className="h-4 w-4 sm:h-5 sm:w-5" />
+                  Jetzt relevant
                 </CardTitle>
-                <CardDescription>Basis der aktuellen Auswertung für {data.symbol}.</CardDescription>
+                <CardDescription className="text-xs sm:text-sm">
+                  Kalenderkontext für heute plus die stärksten historischen Muster.
+                </CardDescription>
               </CardHeader>
-              <CardContent className="grid gap-3 sm:grid-cols-2">
-                <div className="rounded-xl border p-4">
-                  <div className="text-sm text-muted-foreground">Historie</div>
-                  <div className="mt-2 text-2xl font-semibold">{data.historyYears} Jahre</div>
-                  <div className="mt-1 text-sm text-muted-foreground">{data.tradingDays} Handelstage</div>
-                </div>
-                <div className="rounded-xl border p-4">
-                  <div className="text-sm text-muted-foreground">Stärkster Zyklus</div>
+              <CardContent className="space-y-3">
+                <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
                     onClick={() =>
                       data.summary.strongestEvent ? handleInsightSelect(`event:${data.summary.strongestEvent.slug}`) : undefined
                     }
-                    className={`mt-2 text-left text-2xl font-semibold ${toneClass(data.summary.strongestEvent?.avgReturnPct)}`}
+                    className="rounded-md border p-2.5 text-left transition-colors hover:bg-muted/40"
                   >
-                    {data.summary.strongestEvent?.label ?? "-"} {formatPct(data.summary.strongestEvent?.avgReturnPct, 2)}
+                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Stärkstes Fenster</div>
+                    <div className={`mt-1 break-words text-sm font-semibold ${toneClass(data.summary.strongestEvent?.avgReturnPct)}`}>
+                      {data.summary.strongestEvent?.label ?? "-"} {formatPct(data.summary.strongestEvent?.avgReturnPct, 2)}
+                    </div>
                   </button>
-                  <div className="mt-1 text-sm text-muted-foreground">
-                    {data.summary.strongestEvent?.description ?? "Keine Daten"}
-                  </div>
-                </div>
-                <div className="rounded-xl border p-4">
-                  <div className="text-sm text-muted-foreground">Bester Monat</div>
                   <button
                     type="button"
                     onClick={() =>
                       data.summary.bestMonth ? handleInsightSelect(`month:${data.summary.bestMonth.label}`) : undefined
                     }
-                    className={`mt-2 text-left text-2xl font-semibold ${toneClass(data.summary.bestMonth?.avgReturnPct)}`}
+                    className="rounded-md border p-2.5 text-left transition-colors hover:bg-muted/40"
                   >
-                    {data.summary.bestMonth?.label ?? "-"} {formatPct(data.summary.bestMonth?.avgReturnPct, 2)}
+                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Bester Monat</div>
+                    <div className={`mt-1 text-sm font-semibold ${toneClass(data.summary.bestMonth?.avgReturnPct)}`}>
+                      {data.summary.bestMonth?.label ?? "-"} {formatPct(data.summary.bestMonth?.avgReturnPct, 2)}
+                    </div>
                   </button>
-                  <div className="mt-1 text-sm text-muted-foreground">
-                    Positivquote {formatPct(data.summary.bestMonth?.positiveRatePct, 0)}
-                  </div>
-                </div>
-                <div className="rounded-xl border p-4">
-                  <div className="text-sm text-muted-foreground">Wahlzyklus</div>
                   <button
                     type="button"
-                    onClick={() => handleInsightSelect("cycle:midterm")}
-                    className="mt-2 text-left text-2xl font-semibold text-foreground"
+                    onClick={() =>
+                      data.summary.bestWeekday ? handleInsightSelect(`weekday:${data.summary.bestWeekday.label}`) : undefined
+                    }
+                    className="rounded-md border p-2.5 text-left transition-colors hover:bg-muted/40"
                   >
-                    Midterm Drawdowns
+                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Bester Tag</div>
+                    <div className={`mt-1 text-sm font-semibold ${toneClass(data.summary.bestWeekday?.avgReturnPct)}`}>
+                      {data.summary.bestWeekday?.label ?? "-"} {formatPct(data.summary.bestWeekday?.avgReturnPct, 2)}
+                    </div>
                   </button>
-                  <div className="mt-1 text-sm text-muted-foreground">
-                    Die Detailtabelle unten zeigt Tiefpunkt und 12M-Erholung wie in deinem Beispielbild.
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => (bestPresidentialCycle ? handleInsightSelect(`cycle:${bestPresidentialCycle.cycleKey}`) : undefined)}
+                    className="rounded-md border p-2.5 text-left transition-colors hover:bg-muted/40"
+                  >
+                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Bestes Wahljahr</div>
+                    <div className={`mt-1 break-words text-sm font-semibold ${toneClass(bestPresidentialCycle?.avgReturnPct)}`}>
+                      {bestPresidentialCycle?.label ?? "-"} {formatPct(bestPresidentialCycle?.avgReturnPct, 1)}
+                    </div>
+                  </button>
+                </div>
+
+                <div className="space-y-2">
+                  <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Heute im Kalender</div>
+                  {currentCalendarInsights.length > 0 ? (
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {currentCalendarInsights.map((item) => {
+                        const quality = sampleQuality(item.sampleSize, item.sampleUnit);
+                        return (
+                          <button
+                            key={item.id}
+                            type="button"
+                            onClick={() => handleInsightSelect(item.id)}
+                            className={`rounded-md border p-2.5 text-left transition-colors hover:bg-muted/40 ${heatClass(item.avgReturnPct)}`}
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <div className="break-words text-sm font-semibold">{item.label}</div>
+                                <div className="mt-0.5 text-[11px] opacity-80">
+                                  {item.type} · {item.reason}
+                                </div>
+                              </div>
+                              <Badge variant="outline" className={`shrink-0 bg-background/70 text-[10px] ${quality.className}`}>
+                                {quality.label}
+                              </Badge>
+                            </div>
+                            <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs">
+                              <span>Ø {formatPct(item.avgReturnPct, 2)}</span>
+                              <span>Positiv {formatPct(item.positiveRatePct, 0)}</span>
+                              <span>{formatCount(item.sampleSize, item.sampleUnit)}</span>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="rounded-md border p-2.5 text-sm text-muted-foreground">
+                      Heute liegt kein klarer Tages- oder Wochenfilter an. Nutze die Monats- und Fensterauswahl unten.
+                    </div>
+                  )}
                 </div>
               </CardContent>
             </Card>
           </div>
 
+          <Card className="hidden xl:block">
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Filter className="h-4 w-4" />
+                Glossar
+              </CardTitle>
+              <CardDescription>Die wichtigsten Begriffe kompakt, Details erscheinen zusätzlich im jeweiligen Dialog.</CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+              {SEASONALITY_GLOSSARY.slice(0, 8).map((entry) => (
+                <div key={entry.title} className="rounded-md border p-2.5">
+                  <div className="text-sm font-medium">{entry.title}</div>
+                  <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">{entry.short}</div>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+
           <Card>
-            <CardHeader>
-              <CardTitle>Interaktive Analyse</CardTitle>
-              <CardDescription>
+            <CardHeader className="pb-2 sm:pb-3">
+              <CardTitle className="text-base sm:text-lg">Muster prüfen</CardTitle>
+              <CardDescription className="hidden sm:block">
                 Suche nach `FOMC`, `Januar`, `Midterm` oder `OpEx` und tippe dann auf eine Kachel oder Tabellenzeile.
-                Die Details öffnen sich jetzt in einem Dialog mit Charts und Tabellen.
+                Die Details zeigen Chart, Einzelfälle und Statistik.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                 <div className="overflow-x-auto pb-1">
-                  <div className="flex min-w-max gap-2">
+                  <div className="inline-flex gap-2 whitespace-nowrap">
                     {FILTERS.map((filter) => (
                       <Button
                         key={filter.key}
@@ -1159,42 +1666,57 @@ export default function SeasonalityPage() {
                     <CardTitle>{selectedInsight?.label ?? "Keine Auswahl"}</CardTitle>
                     <CardDescription>
                       {selectedInsight?.description ??
-                        "Passe den Filter an oder tippe auf eine Monats-, Zyklus- oder Wahljahr-Kachel."}
+                        "Passe den Filter an oder tippe auf eine Monats-, Wochen-/Fenster- oder Wahljahr-Kachel."}
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-4">
                     {selectedInsight ? (
                       <>
                         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                          <div className="rounded-xl border p-4">
+                          <div className="rounded-md border p-3">
                             <div className="text-sm text-muted-foreground">Durchschnitt</div>
                             <div className={`mt-2 text-2xl font-semibold ${toneClass(selectedInsight.avgReturnPct)}`}>
                               {formatPct(selectedInsight.avgReturnPct, 2)}
                             </div>
                           </div>
-                          <div className="rounded-xl border p-4">
+                          <div className="rounded-md border p-3">
                             <div className="text-sm text-muted-foreground">Median</div>
                             <div className={`mt-2 text-2xl font-semibold ${toneClass(selectedInsight.medianReturnPct)}`}>
                               {formatPct(selectedInsight.medianReturnPct, 2)}
                             </div>
                           </div>
-                          <div className="rounded-xl border p-4">
+                          <div className="rounded-md border p-3">
                             <div className="text-sm text-muted-foreground">Positivquote</div>
                             <div className="mt-2 text-2xl font-semibold">{formatPct(selectedInsight.positiveRatePct, 0)}</div>
                           </div>
-                          <div className="rounded-xl border p-4">
+                          <div className="rounded-md border p-3">
                             <div className="text-sm text-muted-foreground">Historische Fälle</div>
                             <div className="mt-2 text-2xl font-semibold">
                               {formatCount(selectedInsight.sampleSize, selectedInsight.sampleUnit)}
                             </div>
                           </div>
                         </div>
-                        <div className="rounded-xl border p-4 text-sm text-muted-foreground">
-                          Tippe auf `Details öffnen`, um den vollständigen Dialog mit Fallverlauf, Tabellen und historischen
-                          Fällen zu sehen.
+                        <div className="rounded-md border p-3 text-sm text-muted-foreground">
+                          <div className="text-sm text-muted-foreground">Was das praktisch heißt</div>
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            <Badge variant="outline">{selectedInsightGuidance?.badge ?? "Kontext"}</Badge>
+                            <span className="font-medium text-foreground">{selectedInsightGuidance?.headline ?? "Einordnung folgt"}</span>
+                          </div>
+                          <div className="mt-3 text-sm text-muted-foreground">
+                            {selectedInsightGuidance?.summary}
+                          </div>
+                          <div className="mt-2 text-sm text-muted-foreground">
+                            <span className="font-medium text-foreground">Nutzen:</span> {selectedInsightGuidance?.useCase}
+                          </div>
+                          <div className="mt-2 text-sm text-muted-foreground">
+                            <span className="font-medium text-foreground">Wichtig:</span> {selectedInsightGuidance?.caution}
+                          </div>
+                        </div>
+                        <div className="rounded-md border p-3 text-sm text-muted-foreground">
+                          Öffne die Details, um Fallverlauf, Tabellen und historische Einzelfälle zu sehen.
                         </div>
                         <Button className="w-full sm:w-auto" onClick={() => setInsightDialogOpen(true)}>
-                          Details öffnen
+                          Details
                         </Button>
                       </>
                     ) : (
@@ -1213,22 +1735,22 @@ export default function SeasonalityPage() {
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-3">
-                    <div className="rounded-xl border p-4">
+                    <div className="rounded-md border p-3">
                       <div className="text-sm text-muted-foreground">Ansicht</div>
                       <div className="mt-2 text-lg font-semibold">
                         {FILTERS.find((filter) => filter.key === activeFilter)?.label ?? "Alles"}
                       </div>
                     </div>
-                    <div className="rounded-xl border p-4">
+                    <div className="rounded-md border p-3">
                       <div className="text-sm text-muted-foreground">Suche</div>
                       <div className="mt-2 text-lg font-semibold">{deferredInsightQuery || "Keine"}</div>
                     </div>
-                    <div className="rounded-xl border p-4">
+                    <div className="rounded-md border p-3">
                       <div className="text-sm text-muted-foreground">Ausgewählt</div>
                       <div className="mt-2 text-lg font-semibold">{selectedInsight?.label ?? "-"}</div>
                     </div>
-                    <div className="rounded-xl border p-4 text-sm text-muted-foreground">
-                      Tipp: Klicke im Vergleichsboard weiter unten auf einen Markt, um die gesamte Seite direkt darauf
+                    <div className="rounded-md border p-3 text-sm text-muted-foreground">
+                      Klicke im Vergleichsboard weiter unten auf einen Markt, um die gesamte Seite direkt darauf
                       umzuschalten.
                     </div>
                   </CardContent>
@@ -1237,7 +1759,7 @@ export default function SeasonalityPage() {
             </CardContent>
           </Card>
 
-          <div className="grid gap-6 xl:grid-cols-2">
+          <div className="grid gap-4 xl:grid-cols-2">
             <Card>
               <CardHeader>
                 <CardTitle>Monatsprofil</CardTitle>
@@ -1246,7 +1768,7 @@ export default function SeasonalityPage() {
                   nicht nur stark, sondern auch stabil sind.
                 </CardDescription>
               </CardHeader>
-              <CardContent className="h-[360px]">
+              <CardContent className="h-[300px]">
                 <ResponsiveContainer width="100%" height="100%">
                   <ComposedChart data={monthChartData}>
                     <CartesianGrid strokeDasharray="3 3" stroke="oklch(1 0 0 / 0.08)" vertical={false} />
@@ -1310,13 +1832,13 @@ export default function SeasonalityPage() {
 
             <Card>
               <CardHeader>
-                <CardTitle>Event-Ranking</CardTitle>
+                <CardTitle>Fenster-Ranking</CardTitle>
                 <CardDescription>
-                  Alle Event-Zyklen nach Durchschnitt sortiert. Damit erkennst du sofort, welche Kalenderfenster historisch den
+                  Alle Wochen- und Eventfenster nach Durchschnitt sortiert. Damit erkennst du sofort, welche Kalenderfenster historisch den
                   größten Rückenwind oder Gegenwind hatten.
                 </CardDescription>
               </CardHeader>
-              <CardContent className="h-[360px]">
+              <CardContent className="h-[300px]">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={eventRankingData} layout="vertical" margin={{ top: 8, right: 12, left: 8, bottom: 8 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="oklch(1 0 0 / 0.08)" horizontal={false} />
@@ -1375,7 +1897,7 @@ export default function SeasonalityPage() {
           />
 
           <SeasonalityHeatmap
-            title="Zyklus-Heatmap"
+            title="Wochen-/Fenster-Heatmap"
             description="Turn of Month, FOMC, OpEx und andere Marktfenster. Klickbar für Detailansicht und historische Fälle."
             selectedId={selectedInsight?.id ?? null}
             onSelect={handleInsightSelect}
@@ -1391,8 +1913,8 @@ export default function SeasonalityPage() {
           />
 
           <SeasonalityHeatmap
-            title="Wochentag-Heatmap"
-            description="Tagesreturns nach Wochentag. Hier sind die Samples einzelne historische Handelstage."
+            title="Tages-Heatmap"
+            description="Tagesreturns nach Wochentag. Hier sind die Stichproben einzelne historische Handelstage."
             selectedId={selectedInsight?.id ?? null}
             onSelect={handleInsightSelect}
             items={data.weekday.map((item) => ({
@@ -1408,9 +1930,9 @@ export default function SeasonalityPage() {
 
           <Card>
             <CardHeader>
-              <CardTitle>Event- und Jahresvergleich</CardTitle>
+              <CardTitle>Fenster- und Jahresvergleich</CardTitle>
               <CardDescription>
-                Zeilen sind Jahre, Spalten sind Event-Zyklen. So siehst du direkt, welche Muster im selben Jahr zusammen
+                Zeilen sind Jahre, Spalten sind Eventfenster. So siehst du direkt, welche Muster im selben Jahr zusammen
                 stark oder schwach waren.
               </CardDescription>
             </CardHeader>
@@ -1432,7 +1954,7 @@ export default function SeasonalityPage() {
                             </button>
                           </TableHead>
                         ))}
-                        <TableHead>Ø Events</TableHead>
+                        <TableHead>Ø Fenster</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -1445,7 +1967,7 @@ export default function SeasonalityPage() {
                               <TableCell key={`${row.year}-${column.slug}`}>
                                 <button
                                   type="button"
-                                  className={`min-w-[88px] rounded-lg px-2 py-1 text-left ${heatClass(cell?.avgReturnPct)}`}
+                                  className={`min-w-[72px] rounded-lg px-1.5 py-1 text-left sm:min-w-[80px] ${heatClass(cell?.avgReturnPct)}`}
                                   onClick={() => handleInsightSelect(column.id)}
                                   title={
                                     cell?.caseCount
@@ -1453,7 +1975,7 @@ export default function SeasonalityPage() {
                                       : `${column.label} ${row.year}: keine Fälle`
                                   }
                                 >
-                                  <div className="font-medium">{formatPct(cell?.avgReturnPct, 2)}</div>
+                                  <div className="text-xs font-medium sm:text-sm">{formatPct(cell?.avgReturnPct, 2)}</div>
                                   <div className="text-[10px] opacity-80">{cell?.caseCount ?? 0} Fälle</div>
                                 </button>
                               </TableCell>
@@ -1469,7 +1991,7 @@ export default function SeasonalityPage() {
                 </div>
               ) : (
                 <div className="text-sm text-muted-foreground">
-                  Noch nicht genug historische Event-Fälle für einen Jahresvergleich.
+                  Noch nicht genug historische Fenster-Fälle für einen Jahresvergleich.
                 </div>
               )}
             </CardContent>
@@ -1477,15 +1999,15 @@ export default function SeasonalityPage() {
 
           <Card>
             <CardHeader>
-              <CardTitle>Eigene Events untereinander</CardTitle>
+              <CardTitle>Fenster vergleichen</CardTitle>
               <CardDescription>
-                Wähle bis zu sechs Events aus und vergleiche sie direkt nebeneinander. Fokus liegt auf den internen
-                Saisonalitäts-Events der App.
+                Wähle bis zu sechs Fenster aus und vergleiche sie direkt nebeneinander. Fokus liegt auf den internen
+                Wochen- und Eventfenstern der App.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="overflow-x-auto pb-1">
-                <div className="flex min-w-max gap-2">
+                <div className="inline-flex gap-2 whitespace-nowrap">
                   {data.eventCycles.map((cycle) => {
                     const selected = selectedEventSlugs.includes(cycle.slug);
                     return (
@@ -1584,7 +2106,7 @@ export default function SeasonalityPage() {
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>Event</TableHead>
+                        <TableHead>Fenster</TableHead>
                         {selectedEvents.map((cycle) => (
                           <TableHead key={`${cycle.slug}-align-head`}>{shortenLabel(cycle.label, 14)}</TableHead>
                         ))}
@@ -1635,8 +2157,8 @@ export default function SeasonalityPage() {
                       <TableRow>
                         <TableHead>Markt</TableHead>
                         <TableHead>Bester Monat</TableHead>
-                        <TableHead>Stärkster Event-Zyklus</TableHead>
-                        <TableHead>Bester Wahlzyklus</TableHead>
+                        <TableHead>Stärkstes Fenster</TableHead>
+                        <TableHead>Bestes Wahljahr</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -1672,11 +2194,11 @@ export default function SeasonalityPage() {
             <CardHeader>
               <CardTitle>Marktvergleich als Diagramm</CardTitle>
               <CardDescription>
-                Ranking der Presets nach ihrem stärksten Event-Zyklus. Ein schneller Überblick, welcher Markt historisch den
+                Ranking der Presets nach ihrem stärksten Fenster. Ein schneller Überblick, welcher Markt historisch den
                 besten saisonalen Rückenwind hatte.
               </CardDescription>
             </CardHeader>
-            <CardContent className="h-[360px]">
+            <CardContent className="h-[300px]">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={comparisonChartData} layout="vertical" margin={{ top: 8, right: 12, left: 8, bottom: 8 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="oklch(1 0 0 / 0.08)" horizontal={false} />
@@ -1696,7 +2218,7 @@ export default function SeasonalityPage() {
                     tickLine={false}
                   />
                   <Tooltip
-                    formatter={(value: number) => [`${value.toFixed(2)}%`, "Stärkster Event-Zyklus"]}
+                    formatter={(value: number) => [`${value.toFixed(2)}%`, "Stärkstes Fenster"]}
                     labelFormatter={(label) => {
                       const match = comparisonChartData.find((entry) => entry.label === label);
                       return match ? `${match.label} (${match.symbol})` : String(label);
@@ -1715,7 +2237,7 @@ export default function SeasonalityPage() {
             </CardContent>
           </Card>
 
-          <div className="grid gap-6 xl:grid-cols-2">
+          <div className="grid gap-4 xl:grid-cols-2">
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
@@ -1760,7 +2282,7 @@ export default function SeasonalityPage() {
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <TrendingUp className="h-5 w-5" />
-                  Event-Zyklen
+                  Wochen- und Eventfenster
                 </CardTitle>
                 <CardDescription>Kalendereffekte wie Turn of Month, Santa Rally, FOMC und OpEx.</CardDescription>
               </CardHeader>
@@ -1769,7 +2291,7 @@ export default function SeasonalityPage() {
                   <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Zyklus</TableHead>
+                      <TableHead>Fenster</TableHead>
                       <TableHead>Durchschnitt</TableHead>
                       <TableHead>Median</TableHead>
                       <TableHead>Positiv</TableHead>
@@ -1803,7 +2325,7 @@ export default function SeasonalityPage() {
           <Card>
             <CardHeader>
               <CardTitle>Alle Kalendereffekte</CardTitle>
-              <CardDescription>Klick auf ein Badge springt direkt in die Detailansicht dieses Zyklus.</CardDescription>
+              <CardDescription>Klick auf ein Badge springt direkt in die Detailansicht dieses Fensters.</CardDescription>
             </CardHeader>
             <CardContent>
               <div className="flex flex-wrap gap-2">
@@ -1911,7 +2433,7 @@ export default function SeasonalityPage() {
                   href={source.url}
                   target="_blank"
                   rel="noreferrer"
-                  className="rounded-xl border p-4 transition-colors hover:bg-muted/40"
+                  className="rounded-md border p-3 transition-colors hover:bg-muted/40"
                 >
                   <div className="flex items-center justify-between gap-3">
                     <div className="font-medium">{source.title}</div>

@@ -44,7 +44,7 @@
 }
 
 :root {
-  --radius: 0.75rem;
+  --radius: 0.5rem;
   --background: oklch(0.985 0.002 247.839);
   --foreground: oklch(0.141 0.005 285.823);
   --card: oklch(1 0 0);
@@ -124,5 +124,78 @@
   body {
     @apply bg-background text-foreground antialiased selection:bg-zinc-700 selection:text-white;
     font-feature-settings: "rlig" 1, "calt" 1;
+  }
+}
+
+html[data-density="compact"] [data-slot="card"] {
+  gap: 0.5rem !important;
+}
+
+html[data-density="compact"] [data-slot="card-header"] {
+  padding: 0.65rem 0.75rem 0.35rem !important;
+}
+
+html[data-density="compact"] [data-slot="card-content"] {
+  padding: 0 0.75rem 0.75rem !important;
+}
+
+html[data-density="compact"] [data-slot="card-footer"] {
+  padding-left: 0.75rem !important;
+  padding-right: 0.75rem !important;
+}
+
+html[data-density="compact"] [data-slot="table-head"] {
+  height: 1.8rem !important;
+}
+
+html[data-density="compact"] [data-slot="table-cell"] {
+  padding-top: 0.25rem !important;
+  padding-bottom: 0.25rem !important;
+}
+
+.no-scrollbar {
+  scrollbar-width: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+[data-slot="table-container"],
+[data-slot="tabs-list"] {
+  -webkit-overflow-scrolling: touch;
+}
+
+[data-slot="card-title"],
+[data-slot="card-description"],
+[data-slot="badge"] {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 767px) {
+  [data-slot="card"] {
+    gap: 0.5rem;
+  }
+
+  [data-slot="card-header"] {
+    padding: 0.7rem 0.75rem 0.35rem;
+  }
+
+  [data-slot="card-content"] {
+    padding: 0 0.75rem 0.75rem;
+  }
+
+  [data-slot="card-footer"] {
+    padding-left: 0.75rem;
+    padding-right: 0.75rem;
+  }
+
+  [data-slot="table-head"] {
+    height: 1.8rem;
+  }
+
+  [data-slot="table-cell"] {
+    padding-top: 0.25rem;
+    padding-bottom: 0.25rem;
   }
 }

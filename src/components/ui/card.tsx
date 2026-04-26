@@ -7,7 +7,7 @@ function Card({ className, ...props }: React.ComponentProps<"div">) {
     <div
       data-slot="card"
       className={cn(
-        "bg-card/50 backdrop-blur-md text-card-foreground flex flex-col gap-6 rounded-xl border border-white/10 shadow-sm transition-all duration-300 hover:border-white/20 hover:shadow-md",
+        "bg-card/55 text-card-foreground flex flex-col gap-3 rounded-md border border-border/70 shadow-none transition-colors hover:border-border",
         className
       )}
       {...props}
@@ -19,7 +19,7 @@ function CardHeader({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="card-header"
-      className={cn("flex flex-col gap-1.5 px-4 md:px-6", className)}
+      className={cn("flex flex-col gap-1 px-3 pt-3 sm:px-4 sm:pt-4", className)}
       {...props}
     />
   )
@@ -29,7 +29,7 @@ function CardTitle({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="card-title"
-      className={cn("leading-none font-semibold", className)}
+      className={cn("leading-tight font-semibold", className)}
       {...props}
     />
   )
@@ -39,7 +39,7 @@ function CardDescription({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="card-description"
-      className={cn("text-muted-foreground text-sm", className)}
+      className={cn("text-muted-foreground text-xs sm:text-sm", className)}
       {...props}
     />
   )
@@ -62,7 +62,7 @@ function CardContent({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="card-content"
-      className={cn("px-4 pb-4 md:px-6 md:pb-6", className)}
+      className={cn("px-3 pb-3 sm:px-4 sm:pb-4", className)}
       {...props}
     />
   )
@@ -72,7 +72,7 @@ function CardFooter({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="card-footer"
-      className={cn("flex items-center px-6 [.border-t]:pt-6", className)}
+      className={cn("flex items-center px-3 sm:px-4 [.border-t]:pt-3 sm:[.border-t]:pt-4", className)}
       {...props}
     />
   )

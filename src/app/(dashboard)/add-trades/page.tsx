@@ -248,7 +248,7 @@ export default function AddTradesPage() {
   const validTradesCount = trades.filter((t) => t.isValid).length;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Trades hinzufügen</h1>
         <p className="text-muted-foreground">
@@ -256,7 +256,7 @@ export default function AddTradesPage() {
         </p>
       </div>
 
-      <div className="grid gap-4 sm:gap-6 grid-cols-1 md:grid-cols-2">
+      <div className="grid gap-4 sm:gap-4 grid-cols-1 md:grid-cols-2">
         {/* Broker Selection */}
         <Card>
           <CardHeader>

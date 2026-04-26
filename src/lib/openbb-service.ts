@@ -87,6 +87,15 @@ const OPENBB_TIMEOUT_MS = Number.parseInt(process.env.OPENBB_TIMEOUT_MS || "6000
 const OPENBB_MAX_SYMBOLS_PER_SCAN = Number.parseInt(process.env.OPENBB_MAX_SYMBOLS_PER_SCAN || "1000", 10);
 const OPENBB_API_KEY = (process.env.OPENBB_API_KEY || "").trim();
 const OPENBB_CONCURRENCY = Number.parseInt(process.env.OPENBB_CONCURRENCY || "6", 10);
+const OPENBB_QUOTE_BATCH_SIZE_RAW = Number.parseInt(process.env.OPENBB_QUOTE_BATCH_SIZE || "80", 10);
+const OPENBB_QUOTE_BATCH_SIZE = Number.isFinite(OPENBB_QUOTE_BATCH_SIZE_RAW) && OPENBB_QUOTE_BATCH_SIZE_RAW > 0
+  ? Math.min(OPENBB_QUOTE_BATCH_SIZE_RAW, 250)
+  : 80;
+const OPENBB_SINGLE_QUOTE_FALLBACK_LIMIT_RAW = Number.parseInt(process.env.OPENBB_SINGLE_QUOTE_FALLBACK_LIMIT || "24", 10);
+const OPENBB_SINGLE_QUOTE_FALLBACK_LIMIT =
+  Number.isFinite(OPENBB_SINGLE_QUOTE_FALLBACK_LIMIT_RAW) && OPENBB_SINGLE_QUOTE_FALLBACK_LIMIT_RAW > 0
+    ? Math.min(OPENBB_SINGLE_QUOTE_FALLBACK_LIMIT_RAW, 200)
+    : 24;
 const STOOQ_TIMEOUT_MS = 15_000;
 
 function normalizeStooqSymbol(symbol: string): string | null {
@@ -309,6 +318,40 @@ async function fetchQuoteSnapshot(symbol: string): Promise<OpenBBQuoteSnapshot |
   return null;
 }
 
+async function fetchQuoteSnapshotBatch(symbols: string[]): Promise<Map<string, OpenBBQuoteSnapshot>> {
+  const deduped = Array.from(new Set(symbols.map((symbol) => symbol.toUpperCase().trim()).filter(Boolean)));
+  const result = new Map<string, OpenBBQuoteSnapshot>();
+  if (deduped.length === 0) return result;
+
+  const symbolSet = new Set(deduped);
+  const symbolsParam = deduped.join(",");
+  const quotePaths = [
+    toApiPath("/equity/price/quote", { symbols: symbolsParam, provider: OPENBB_PROVIDER }),
+    toApiPath("/equity/price/quote", { symbols: symbolsParam }),
+  ];
+
+  if (deduped.length === 1) {
+    const [single] = deduped;
+    quotePaths.push(
+      toApiPath("/equity/price/quote", { symbol: single, provider: OPENBB_PROVIDER }),
+      toApiPath("/equity/price/quote", { symbol: single }),
+    );
+  }
+
+  const payload = await fetchFirstJson(quotePaths);
+  if (!payload) return result;
+
+  const rows = extractRows(payload);
+  for (const row of rows) {
+    const parsed = parseQuoteSnapshot(row);
+    if (!parsed) continue;
+    if (!symbolSet.has(parsed.symbol)) continue;
+    result.set(parsed.symbol, parsed);
+  }
+
+  return result;
+}
+
 async function mapWithConcurrency<T, R>(
   items: T[],
   concurrency: number,
@@ -415,15 +458,46 @@ export async function fetchOpenBBQuoteSnapshotStocks(symbols: string[]): Promise
   const result = new Map<string, OpenBBQuoteSnapshot>();
   if (!OPENBB_ENABLED || deduped.length === 0) return result;
 
-  const rows = await mapWithConcurrency(
-    deduped,
-    Number.isFinite(OPENBB_CONCURRENCY) && OPENBB_CONCURRENCY > 0 ? OPENBB_CONCURRENCY : 6,
-    (symbol) => fetchQuoteSnapshot(symbol)
-  );
+  const concurrency = Number.isFinite(OPENBB_CONCURRENCY) && OPENBB_CONCURRENCY > 0 ? OPENBB_CONCURRENCY : 6;
+  let singleFallbackUsed = 0;
 
-  for (const row of rows) {
-    if (!row) continue;
-    result.set(row.symbol, row);
+  for (let i = 0; i < deduped.length; i += OPENBB_QUOTE_BATCH_SIZE) {
+    const batch = deduped.slice(i, i + OPENBB_QUOTE_BATCH_SIZE);
+    const batchMap = await fetchQuoteSnapshotBatch(batch);
+    batchMap.forEach((row, symbol) => {
+      result.set(symbol, row);
+    });
+
+    const missingSymbols = batch.filter((symbol) => !result.has(symbol));
+    if (missingSymbols.length === 0) continue;
+
+    // Fallback for symbols not returned in the batch response.
+    const fallbackBudget = Math.max(0, OPENBB_SINGLE_QUOTE_FALLBACK_LIMIT - singleFallbackUsed);
+    if (fallbackBudget <= 0) {
+      console.warn(
+        `OpenBB single-quote fallback skipped for ${missingSymbols.length} symbols; limit ${OPENBB_SINGLE_QUOTE_FALLBACK_LIMIT} reached`
+      );
+      continue;
+    }
+
+    const fallbackSymbols = missingSymbols.slice(0, fallbackBudget);
+    if (fallbackSymbols.length < missingSymbols.length) {
+      console.warn(
+        `OpenBB single-quote fallback limited to ${fallbackSymbols.length}/${missingSymbols.length} symbols in batch`
+      );
+    }
+
+    const fallbackRows = await mapWithConcurrency(
+      fallbackSymbols,
+      concurrency,
+      (symbol) => fetchQuoteSnapshot(symbol)
+    );
+    singleFallbackUsed += fallbackSymbols.length;
+
+    for (const row of fallbackRows) {
+      if (!row) continue;
+      result.set(row.symbol, row);
+    }
   }
 
   return result;

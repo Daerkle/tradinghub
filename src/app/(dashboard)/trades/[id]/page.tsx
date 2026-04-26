@@ -245,21 +245,21 @@ export default function TradeDetailPage() {
 
   if (isLoading) {
     return (
-      <div className="space-y-6">
+      <div className="space-y-4">
         <Skeleton className="h-8 w-48" />
         <div className="grid gap-4 md:grid-cols-4">
           {[1, 2, 3, 4].map((i) => (
             <Skeleton key={i} className="h-32" />
           ))}
         </div>
-        <Skeleton className="h-[400px]" />
+        <Skeleton className="h-[300px]" />
       </div>
     );
   }
 
   if (!trade) {
     return (
-      <div className="space-y-6">
+      <div className="space-y-4">
         <div className="flex items-center gap-4">
           <Link href="/trades">
             <Button variant="ghost" size="icon">
@@ -269,7 +269,7 @@ export default function TradeDetailPage() {
           <h1 className="text-2xl font-bold">Trade nicht gefunden</h1>
         </div>
         <Card>
-          <CardContent className="pt-6 text-center">
+          <CardContent className="pt-4 text-center">
             <p className="text-muted-foreground">
               Der angeforderte Trade konnte nicht gefunden werden.
             </p>
@@ -292,7 +292,7 @@ export default function TradeDetailPage() {
   const rMultiple = estimatedRisk > 0 ? trade.pnl / estimatedRisk : 0;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
@@ -369,11 +369,11 @@ export default function TradeDetailPage() {
 
       {/* P&L Hero Card */}
       <Card className={`border-2 ${isWin ? "border-green-500/30 bg-green-500/5" : "border-red-500/30 bg-red-500/5"}`}>
-        <CardContent className="pt-6">
+        <CardContent className="pt-4">
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm text-muted-foreground">Profit / Loss</p>
-              <p className={`text-4xl font-bold ${isWin ? "text-green-500" : "text-red-500"}`}>
+              <p className={`text-2xl font-bold ${isWin ? "text-green-500" : "text-red-500"}`}>
                 {trade.pnl >= 0 ? "+" : ""}${trade.pnl.toFixed(2)}
               </p>
               {trade.commission > 0 && (
@@ -465,7 +465,7 @@ export default function TradeDetailPage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="h-[400px]">
+          <div className="h-[300px]">
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart data={chartData} margin={{ top: 20, right: 30, left: 0, bottom: 0 }}>
                 <defs>
@@ -631,7 +631,7 @@ export default function TradeDetailPage() {
               Maximum Favorable / Adverse Excursion Analyse
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-6">
+          <CardContent className="space-y-4">
             <div className="grid gap-4 md:grid-cols-2">
               {trade.mfe && (
                 <div className="space-y-2">
@@ -682,7 +682,7 @@ export default function TradeDetailPage() {
             Bewerte und dokumentiere deinen Trade
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-6">
+        <CardContent className="space-y-4">
           {/* Star Rating */}
           <div className="space-y-2">
             <Label>Trade-Bewertung</Label>

@@ -53,3 +53,17 @@ export function getMarketWeekdayIndex(date: Date): number {
     return date.getUTCDay();
   }
 }
+
+export function getMarketHour(date: Date): number {
+  try {
+    const hour = new Intl.DateTimeFormat("en-US", {
+      timeZone: MARKET_TIME_ZONE,
+      hour: "2-digit",
+      hourCycle: "h23",
+    }).format(date);
+    const parsed = Number.parseInt(hour, 10);
+    return Number.isFinite(parsed) ? parsed : date.getUTCHours();
+  } catch {
+    return date.getUTCHours();
+  }
+}

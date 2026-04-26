@@ -50,6 +50,7 @@ interface AuthState {
   ) => Promise<void>;
   logout: () => Promise<void>;
   checkAuth: () => Promise<void>;
+  updateUserProfile: (profile: Partial<User>) => void;
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -161,6 +162,12 @@ export const useAuthStore = create<AuthState>()(
         } catch {
           set({ user: null, isAuthenticated: false, isLoading: false });
         }
+      },
+
+      updateUserProfile: (profile) => {
+        set((state) => ({
+          user: state.user ? { ...state.user, ...profile } : state.user,
+        }));
       },
     }),
     {

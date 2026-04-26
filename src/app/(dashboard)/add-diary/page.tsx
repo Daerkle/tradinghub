@@ -81,7 +81,7 @@ export default function AddDiaryPage() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Tagebucheintrag hinzufügen</h1>
         <p className="text-muted-foreground">
@@ -89,7 +89,7 @@ export default function AddDiaryPage() {
         </p>
       </div>
 
-      <div className="grid gap-6 md:grid-cols-2">
+      <div className="grid gap-4 md:grid-cols-2">
         <Card className="md:col-span-2">
           <CardHeader>
             <CardTitle>Eintragsdetails</CardTitle>

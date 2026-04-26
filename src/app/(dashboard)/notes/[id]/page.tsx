@@ -280,7 +280,7 @@ export default function NoteDetailPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
@@ -355,11 +355,11 @@ export default function NoteDetailPage() {
       </div>
 
       {/* Main Content */}
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
         {/* Editor */}
         <div className="lg:col-span-3 space-y-4">
           <Card>
-            <CardContent className="pt-6">
+            <CardContent className="pt-4">
               <Input
                 placeholder="Titel der Notiz..."
                 value={title}
@@ -370,12 +370,12 @@ export default function NoteDetailPage() {
           </Card>
 
           <Card className="min-h-[500px]">
-            <CardContent className="pt-6">
+            <CardContent className="pt-4">
               <Textarea
                 placeholder="Schreibe deine Notiz hier..."
                 value={content}
                 onChange={(e) => setContent(e.target.value)}
-                className="min-h-[450px] border-none resize-none focus-visible:ring-0"
+                className="min-h-[340px] border-none resize-none focus-visible:ring-0 sm:min-h-[380px]"
               />
             </CardContent>
           </Card>

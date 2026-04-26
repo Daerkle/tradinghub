@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { translateNewsTag } from "@/lib/news-tags";
 import { SectorRotationHeatmap } from "@/components/scanner/sector-rotation-heatmap";
+import { cn } from "@/lib/utils";
 import type { StockData } from "@/types/scanner";
 
 type HeatGroup = {
@@ -89,9 +90,11 @@ function buildHeatGroups(stocks: StockData[], key: (s: StockData) => string): He
 export function ScannerInsights({
   stocks,
   onSearch,
+  compact = false,
 }: {
   stocks: StockData[];
   onSearch?: (query: string) => void;
+  compact?: boolean;
 }) {
   const [feed, setFeed] = useState<CatalystFeedResponse | null>(null);
   const [market, setMarket] = useState<MarketResponse | null>(null);
@@ -137,19 +140,21 @@ export function ScannerInsights({
       .slice(0, 10);
   }, [feed]);
 
-  const topSectors = sectorGroups.slice(0, 6);
-  const topIndustries = industryGroups.slice(0, 6);
+  const topSectors = sectorGroups.slice(0, compact ? 4 : 6);
+  const topIndustries = industryGroups.slice(0, compact ? 4 : 6);
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle>Heute: Themes, Sektoren, Markt-Regime</CardTitle>
-        <CardDescription>
+      <CardHeader className={compact ? "pb-1 sm:pb-2" : undefined}>
+        <CardTitle className={compact ? "break-words text-sm leading-tight" : undefined}>
+          Heute: Themes, Sektoren, Markt-Regime
+        </CardTitle>
+        <CardDescription className={compact ? "hidden sm:block" : undefined}>
           Regelbasiert (ohne KI). Scores sind eine Heuristik aus Catalyst, Volumen, Gap und Momentum.
         </CardDescription>
       </CardHeader>
-      <CardContent>
-        <div className="grid gap-4 md:grid-cols-3">
+      <CardContent className={compact ? "pt-0" : undefined}>
+        <div className={cn("grid gap-3 md:grid-cols-3", compact && "gap-2")}>
           <div className="space-y-2">
             <div className="text-xs text-muted-foreground">Markt-Regime (SPY)</div>
             {loading && !market ? (
@@ -159,20 +164,22 @@ export function ScannerInsights({
                 <Skeleton className="h-4 w-3/4" />
               </div>
             ) : market ? (
-              <div className="rounded-md border p-3">
+              <div className="rounded-md border p-2.5">
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge variant="secondary">{market.regime.label}</Badge>
                   <span className="text-xs text-muted-foreground">
                     1M {market.spy.m1.toFixed(1)}% · 3M {market.spy.m3.toFixed(1)}% · 6M {market.spy.m6.toFixed(1)}%
                   </span>
                 </div>
-                <p className="mt-2 text-sm text-muted-foreground">{market.regime.explanation}</p>
+                <p className={cn("mt-2 text-sm text-muted-foreground", compact && "line-clamp-2 sm:line-clamp-none")}>
+                  {market.regime.explanation}
+                </p>
               </div>
             ) : (
               <div className="text-sm text-muted-foreground">Marktdaten aktuell nicht verfuegbar.</div>
             )}
 
-            <div className="text-xs text-muted-foreground mt-4">News-Themes (heute)</div>
+            <div className="mt-3 text-xs text-muted-foreground">News-Themes (heute)</div>
             {loading && !feed ? (
               <div className="flex flex-wrap gap-1">
                 {Array.from({ length: 6 }).map((_, i) => (
@@ -182,21 +189,28 @@ export function ScannerInsights({
             ) : topTags.length > 0 ? (
               <div className="flex flex-wrap gap-1">
                 {topTags.map(([tag, count]) => (
-                  <Badge key={`theme-${tag}`} variant="outline" className="text-[11px] px-2 py-0.5">
-                    {translateNewsTag(tag)} {count}
-                  </Badge>
+                  <button
+                    key={`theme-${tag}`}
+                    type="button"
+                    onClick={() => onSearch?.(tag)}
+                    className="rounded-full text-left transition-opacity hover:opacity-80"
+                  >
+                    <Badge variant="outline" className="px-2 py-0.5 text-[11px]">
+                      {translateNewsTag(tag)} {count}
+                    </Badge>
+                  </button>
                 ))}
               </div>
             ) : (
               <div className="text-sm text-muted-foreground">Keine Themes gefunden.</div>
             )}
 
-            <div className="mt-4">
-              <SectorRotationHeatmap onSelect={(query) => onSearch?.(query)} />
+            <div className={cn("mt-3", compact && "hidden sm:block")}>
+              <SectorRotationHeatmap compact={compact} limit={compact ? 4 : undefined} onSelect={(query) => onSearch?.(query)} />
             </div>
           </div>
 
-          <div className="space-y-2">
+          <div className={cn("space-y-2", compact && "hidden sm:block")}>
             <div className="text-xs text-muted-foreground">Heisse Sektoren</div>
             {topSectors.length === 0 ? (
               <div className="text-sm text-muted-foreground">Noch keine Daten.</div>
@@ -207,15 +221,15 @@ export function ScannerInsights({
                     key={`sector-${g.name}`}
                     type="button"
                     onClick={() => onSearch?.(g.name)}
-                    className="w-full text-left rounded-md border p-2 hover:bg-muted/40 transition-colors"
+                    className="w-full rounded-md border p-1.5 text-left transition-colors hover:bg-muted/40"
                   >
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="min-w-0">
-                        <div className="font-medium truncate">{g.name}</div>
-                        <div className="mt-1 text-xs text-muted-foreground truncate">
-                          Top: {g.topSymbols.join(", ")}
-                        </div>
-                      </div>
+	                    <div className="flex items-center justify-between gap-2">
+	                      <div className="min-w-0">
+	                        <div className="break-words font-medium leading-tight">{g.name}</div>
+	                        <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+	                          Top: {g.topSymbols.join(", ")}
+	                        </div>
+	                      </div>
                       <Badge variant="secondary" className="text-[11px]">{g.count}</Badge>
                     </div>
                   </button>
@@ -224,7 +238,7 @@ export function ScannerInsights({
             )}
           </div>
 
-          <div className="space-y-2">
+          <div className={cn("space-y-2", compact && "hidden sm:block")}>
             <div className="text-xs text-muted-foreground">Heisse Industrien</div>
             {topIndustries.length === 0 ? (
               <div className="text-sm text-muted-foreground">Noch keine Daten.</div>
@@ -235,15 +249,15 @@ export function ScannerInsights({
                     key={`industry-${g.name}`}
                     type="button"
                     onClick={() => onSearch?.(g.name)}
-                    className="w-full text-left rounded-md border p-2 hover:bg-muted/40 transition-colors"
+                    className="w-full rounded-md border p-1.5 text-left transition-colors hover:bg-muted/40"
                   >
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="min-w-0">
-                        <div className="font-medium truncate">{g.name}</div>
-                        <div className="mt-1 text-xs text-muted-foreground truncate">
-                          Top: {g.topSymbols.join(", ")}
-                        </div>
-                      </div>
+	                    <div className="flex items-center justify-between gap-2">
+	                      <div className="min-w-0">
+	                        <div className="break-words font-medium leading-tight">{g.name}</div>
+	                        <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+	                          Top: {g.topSymbols.join(", ")}
+	                        </div>
+	                      </div>
                       <Badge variant="secondary" className="text-[11px]">{g.count}</Badge>
                     </div>
                   </button>

@@ -18,39 +18,21 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Plus } from "lucide-react";
 import Link from "next/link";
-
-const pageTitles: Record<string, string> = {
-  "/dashboard": "Dashboard",
-  "/daily": "Täglich",
-  "/correction": "Korrektur & Sentiment",
-  "/market-dashboard": "Market Dashboard",
-  "/calendar": "Kalender",
-  "/screenshots": "Screenshots",
-  "/videos": "Videos",
-  "/diary": "Tagebuch",
-  "/notes": "Notizen",
-  "/playbook": "Playbook",
-  "/settings": "Einstellungen",
-  "/add-trades": "Trades hinzufügen",
-  "/add-diary": "Tagebuch hinzufügen",
-  "/add-screenshot": "Screenshot hinzufügen",
-  "/add-playbook": "Playbook hinzufügen",
-  "/add-video": "Video hochladen",
-};
+import { getPageTitle } from "@/lib/navigation";
 
 export function Header() {
   const pathname = usePathname();
-  const pageTitle = pageTitles[pathname] || "TradingHub";
+  const pageTitle = getPageTitle(pathname);
   const showQuickAdd = !pathname.startsWith("/add-");
 
   return (
-    <header className="flex h-12 sm:h-14 shrink-0 items-center gap-2 border-b bg-background px-3 sm:px-4">
-      <SidebarTrigger className="-ml-1" />
-      <Separator orientation="vertical" className="mr-2 h-4" />
+    <header className="sticky top-0 z-30 flex h-12 shrink-0 items-center gap-2 border-b bg-background/95 px-3 backdrop-blur supports-[backdrop-filter]:bg-background/80 sm:h-14 sm:px-4">
+      <SidebarTrigger className="-ml-1 h-9 w-9 shrink-0" />
+      <Separator orientation="vertical" className="mr-1 hidden h-4 sm:block" />
       <Breadcrumb className="min-w-0 flex-1">
         <BreadcrumbList>
           <BreadcrumbItem className="min-w-0">
-            <BreadcrumbPage className="truncate">{pageTitle}</BreadcrumbPage>
+            <BreadcrumbPage className="truncate text-sm font-medium sm:text-base">{pageTitle}</BreadcrumbPage>
           </BreadcrumbItem>
         </BreadcrumbList>
       </Breadcrumb>
@@ -59,9 +41,9 @@ export function Header() {
         <div className="ml-auto flex items-center gap-2">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button size="sm" className="shrink-0">
-                <Plus className="h-4 w-4 md:mr-2" />
-                <span className="hidden md:inline">Hinzufügen</span>
+              <Button size="sm" className="h-9 shrink-0 gap-2 px-2.5 sm:px-3" aria-label="Hinzufügen">
+                <Plus className="h-4 w-4" />
+                <span className="hidden sm:inline">Hinzufügen</span>
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">

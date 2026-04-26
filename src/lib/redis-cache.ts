@@ -9,6 +9,7 @@ const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379";
 // Cache TTL (Time To Live) in seconds
 export const CACHE_TTL = {
   SCANNER_DATA: 5 * 60,      // 5 minutes for scanner results
+  SCANNER_SNAPSHOT: 24 * 60 * 60, // 24 hours stale scanner snapshot for instant page loads
   STOCK_LIST: 24 * 60 * 60,  // 24 hours for stock symbol list
   QUOTES: 1 * 60,            // 1 minute for real-time quotes
   FINVIZ_DATA: 6 * 60 * 60,  // 6 hours for Finviz data (changes slowly; reduces scraping)
@@ -205,19 +206,19 @@ export async function getCachedStockList(): Promise<string[] | null> {
 
 // Cache scanner results
 export async function cacheScannerResults(results: unknown): Promise<boolean> {
-  return cacheSet(CACHE_KEYS.SCANNER_RESULTS, results, CACHE_TTL.SCANNER_DATA);
+  return unifiedCacheSet(CACHE_KEYS.SCANNER_RESULTS, results, CACHE_TTL.SCANNER_SNAPSHOT);
 }
 
 export async function getCachedScannerResults<T>(): Promise<T | null> {
-  return cacheGet<T>(CACHE_KEYS.SCANNER_RESULTS);
+  return unifiedCacheGet<T>(CACHE_KEYS.SCANNER_RESULTS);
 }
 
 export async function cacheSeededScannerResults(results: unknown): Promise<boolean> {
-  return cacheSet(CACHE_KEYS.SCANNER_RESULTS_SEEDED, results, CACHE_TTL.SCANNER_DATA);
+  return unifiedCacheSet(CACHE_KEYS.SCANNER_RESULTS_SEEDED, results, CACHE_TTL.SCANNER_SNAPSHOT);
 }
 
 export async function getCachedSeededScannerResults<T>(): Promise<T | null> {
-  return cacheGet<T>(CACHE_KEYS.SCANNER_RESULTS_SEEDED);
+  return unifiedCacheGet<T>(CACHE_KEYS.SCANNER_RESULTS_SEEDED);
 }
 
 // Cache individual Finviz data
@@ -531,6 +532,47 @@ interface SWRCacheEntry<T> {
   dataHash: string;      // Hash to detect changes
 }
 
+const STOCK_CACHE_PREFIX = "scanner:stock:";
+const STOCK_REVALIDATE_AFTER_MS = 4 * 60 * 60 * 1000; // 4 hours
+
+function stockCacheKey(symbol: string): string {
+  return `${STOCK_CACHE_PREFIX}${symbol.toUpperCase().trim()}`;
+}
+
+function normalizeStockSymbols(symbols: string[]): string[] {
+  const deduped: string[] = [];
+  const seen = new Set<string>();
+  for (const rawSymbol of symbols) {
+    const symbol = (rawSymbol || "").toUpperCase().trim();
+    if (!symbol) continue;
+    if (seen.has(symbol)) continue;
+    seen.add(symbol);
+    deduped.push(symbol);
+  }
+  return deduped;
+}
+
+function parseSWRCacheEntry<T>(raw: string | null): SWRCacheEntry<T> | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Partial<SWRCacheEntry<T>>;
+    if (!parsed || typeof parsed !== "object") return null;
+    if (!("data" in parsed)) return null;
+    const cachedAt = typeof parsed.cachedAt === "number" ? parsed.cachedAt : null;
+    const dataHash = typeof parsed.dataHash === "string" ? parsed.dataHash : null;
+    if (cachedAt === null || !Number.isFinite(cachedAt) || dataHash === null) {
+      return null;
+    }
+    return {
+      data: parsed.data as T,
+      cachedAt,
+      dataHash,
+    };
+  } catch {
+    return null;
+  }
+}
+
 // Simple hash function for change detection
 function simpleHash(data: unknown): string {
   const str = JSON.stringify(data);
@@ -557,6 +599,61 @@ export async function swrCacheSet<T>(
   return unifiedCacheSet(key, entry, ttlSeconds);
 }
 
+// Set multiple SWR cache entries with Redis pipeline
+export async function swrCacheSetMany<T>(
+  entries: Array<{ key: string; value: T }>,
+  ttlSeconds: number
+): Promise<number> {
+  if (entries.length === 0) return 0;
+
+  const now = Date.now();
+  const prepared = entries.map(({ key, value }) => ({
+    key,
+    envelope: {
+      data: value,
+      cachedAt: now,
+      dataHash: simpleHash(value),
+    } as SWRCacheEntry<T>,
+  }));
+
+  // Always mirror to memory cache as fallback.
+  for (const item of prepared) {
+    memoryCacheSet(item.key, item.envelope, ttlSeconds);
+  }
+
+  const client = getRedisClient();
+  if (!client) {
+    return prepared.length;
+  }
+
+  const pipeline = client.pipeline();
+  for (const item of prepared) {
+    pipeline.setex(item.key, ttlSeconds, JSON.stringify(item.envelope));
+  }
+
+  try {
+    await pipeline.exec();
+    return prepared.length;
+  } catch (error) {
+    console.warn("SWR cache set-many error:", error);
+    return 0;
+  }
+}
+
+// Batch helper for stock SWR cache writes
+export async function cacheStocksWithSWR<T extends { symbol: string }>(
+  stocks: T[],
+  ttlSeconds: number
+): Promise<number> {
+  const entries = stocks
+    .filter((stock) => typeof stock.symbol === "string" && stock.symbol.trim().length > 0)
+    .map((stock) => ({
+      key: stockCacheKey(stock.symbol),
+      value: stock,
+    }));
+  return swrCacheSetMany(entries, ttlSeconds);
+}
+
 // Get cache with SWR - returns data immediately if available
 export async function swrCacheGet<T>(key: string): Promise<{
   data: T | null;
@@ -576,6 +673,61 @@ export async function swrCacheGet<T>(key: string): Promise<{
     cachedAt: entry.cachedAt,
     hash: entry.dataHash,
   };
+}
+
+// Batch helper for stock SWR cache reads
+export async function getStocksWithSWRBatch<T>(symbols: string[]): Promise<Array<{
+  symbol: string;
+  data: T | null;
+  cachedAt: number | null;
+  hash: string | null;
+  needsRevalidation: boolean;
+}>> {
+  const normalizedSymbols = normalizeStockSymbols(symbols);
+  if (normalizedSymbols.length === 0) return [];
+
+  const keys = normalizedSymbols.map((symbol) => stockCacheKey(symbol));
+  const entriesBySymbol = new Map<string, SWRCacheEntry<T> | null>();
+  const client = getRedisClient();
+
+  if (client) {
+    try {
+      const values = await client.mget(...keys);
+      values.forEach((rawValue, index) => {
+        entriesBySymbol.set(
+          normalizedSymbols[index],
+          parseSWRCacheEntry<T>(rawValue)
+        );
+      });
+    } catch (error) {
+      console.warn("Batch stock SWR cache read error:", error);
+    }
+  }
+
+  // Redis unavailable or miss/error: try memory fallback per key.
+  for (const symbol of normalizedSymbols) {
+    const current = entriesBySymbol.get(symbol) ?? null;
+    if (current) continue;
+    const key = stockCacheKey(symbol);
+    const memoryEntry = memoryCacheGet<SWRCacheEntry<T>>(key);
+    entriesBySymbol.set(symbol, memoryEntry ?? null);
+  }
+
+  return normalizedSymbols.map((symbol) => {
+    const entry = entriesBySymbol.get(symbol) ?? null;
+    const cachedAt = entry?.cachedAt ?? null;
+    const needsRevalidation = cachedAt
+      ? (Date.now() - cachedAt) > STOCK_REVALIDATE_AFTER_MS
+      : true;
+
+    return {
+      symbol,
+      data: entry?.data ?? null,
+      cachedAt,
+      hash: entry?.dataHash ?? null,
+      needsRevalidation,
+    };
+  });
 }
 
 // Check if data has changed by comparing hashes
@@ -614,7 +766,7 @@ export async function swrValidateStock<T>(
   fetchFn: () => Promise<T | null>,
   ttlSeconds: number
 ): Promise<{ updated: boolean; data: T | null }> {
-  const key = `scanner:stock:${symbol}`;
+  const key = stockCacheKey(symbol);
 
   // Skip if already revalidating
   if (!startRevalidation(key)) {
@@ -704,14 +856,12 @@ export async function getStockWithSWR<T>(symbol: string): Promise<{
   hash: string | null;
   needsRevalidation: boolean;
 }> {
-  const key = `scanner:stock:${symbol}`;
+  const key = stockCacheKey(symbol);
   const result = await swrCacheGet<T>(key);
 
   // Determine if revalidation is needed based on age
-  // Stocks older than 4 hours should be revalidated in background
-  const REVALIDATE_AFTER_MS = 4 * 60 * 60 * 1000; // 4 hours
   const needsRevalidation = result.cachedAt
-    ? (Date.now() - result.cachedAt) > REVALIDATE_AFTER_MS
+    ? (Date.now() - result.cachedAt) > STOCK_REVALIDATE_AFTER_MS
     : true;
 
   return {

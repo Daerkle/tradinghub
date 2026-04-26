@@ -26,6 +26,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
 import { DiaryService, DiaryData } from "@/lib/models";
+import { useCurrencyFormatter } from "@/hooks/use-currency-formatter";
 
 type MoodType = "positive" | "neutral" | "negative";
 
@@ -35,14 +36,8 @@ const moodColors: Record<MoodType, string> = {
   negative: "bg-red-500/10 text-red-500 border-red-500/30",
 };
 
-function formatCurrency(value: number): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-  }).format(value);
-}
-
 export default function DiaryPage() {
+  const { formatMoney } = useCurrencyFormatter();
   const router = useRouter();
   const [entries, setEntries] = useState<DiaryData[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -87,7 +82,7 @@ export default function DiaryPage() {
 
   if (isLoading) {
     return (
-      <div className="space-y-6">
+      <div className="space-y-4">
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold tracking-tight">Trading-Tagebuch</h1>
@@ -122,7 +117,7 @@ export default function DiaryPage() {
 
   if (error) {
     return (
-      <div className="space-y-6">
+      <div className="space-y-4">
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold tracking-tight">Trading-Tagebuch</h1>
@@ -138,7 +133,7 @@ export default function DiaryPage() {
           </Button>
         </div>
         <Card className="border-destructive">
-          <CardContent className="pt-6">
+          <CardContent className="pt-4">
             <p className="text-destructive">{error}</p>
           </CardContent>
         </Card>
@@ -147,7 +142,7 @@ export default function DiaryPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Trading-Tagebuch</h1>
@@ -165,7 +160,7 @@ export default function DiaryPage() {
 
       {entries.length === 0 ? (
         <Card>
-          <CardContent className="pt-6 text-center">
+          <CardContent className="pt-4 text-center">
             <p className="text-muted-foreground mb-4">
               Noch keine Tagebucheinträge vorhanden.
             </p>
@@ -214,7 +209,7 @@ export default function DiaryPage() {
                       }`}
                     >
                       {entry.pnl >= 0 ? "+" : ""}
-                      {formatCurrency(entry.pnl)}
+                      {formatMoney(entry.pnl)}
                     </span>
                     <Button
                       variant="ghost"

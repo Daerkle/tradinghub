@@ -14,7 +14,7 @@ import {
 import { toast } from "sonner";
 import { TradeService } from "@/lib/models";
 import type { FlexQueryTrade } from "@/lib/ib-flex-query";
-import { buildTradeImportHash, type ImportableTrade } from "@/lib/trade-import";
+import { buildTradesFromIBExecutions, type IBExecution } from "@/lib/trade-import";
 
 type SyncStatus = "idle" | "testing" | "syncing" | "success" | "error";
 
@@ -64,127 +64,43 @@ async function postFlexQuery(payload: Record<string, unknown>): Promise<FlexApiR
   }
 }
 
-function mapFlexTradesToImportable(trades: FlexQueryTrade[]): ImportableTrade[] {
-  // Group by symbol for FIFO matching (buy→sell / sell→buy)
-  const bySymbol = new Map<string, FlexQueryTrade[]>();
-  for (const t of trades) {
-    const sym = (t.symbol || t.underlyingSymbol || "").trim();
-    if (!sym) continue;
-    const list = bySymbol.get(sym) || [];
-    list.push(t);
-    bySymbol.set(sym, list);
-  }
+function mapFlexTradesToExecutions(trades: FlexQueryTrade[]): IBExecution[] {
+  return trades.reduce<IBExecution[]>((executions, trade) => {
+      const symbol = (trade.symbol || trade.underlyingSymbol || "").trim().toUpperCase();
+      const time = new Date(trade.dateTime);
+      const isBuy = trade.buySell === "BUY" || trade.buySell === "BOT";
+      const quantity = Math.abs(trade.quantity);
+      const price = Number(trade.tradePrice);
 
-  const result: ImportableTrade[] = [];
-
-  for (const [symbol, execs] of bySymbol) {
-    // Sort chronologically
-    const sorted = [...execs].sort(
-      (a, b) => new Date(a.dateTime).getTime() - new Date(b.dateTime).getTime()
-    );
-
-    let netQty = 0;
-    let entryPrice = 0;
-    let entryTime: Date | null = null;
-    let totalCommission = 0;
-    let realizedPnl = 0;
-    let exitNotional = 0;
-    let exitQty = 0;
-    let contractMultiplier = 1;
-
-    for (const exec of sorted) {
-      const isBuy = exec.buySell === "BUY" || exec.buySell === "BOT";
-      const signedQty = isBuy ? exec.quantity : -exec.quantity;
-      const absQty = exec.quantity;
-
-      if (netQty === 0) {
-        // Opening new position
-        netQty = signedQty;
-        entryPrice = exec.tradePrice;
-        entryTime = new Date(exec.dateTime);
-        totalCommission = Math.abs(exec.commission);
-        realizedPnl = 0;
-        exitNotional = 0;
-        exitQty = 0;
-        contractMultiplier = exec.multiplier > 0 ? exec.multiplier : 1;
-        continue;
+      if (
+        !symbol ||
+        !Number.isFinite(time.getTime()) ||
+        !Number.isFinite(quantity) ||
+        quantity <= 0 ||
+        !Number.isFinite(price) ||
+        price <= 0
+      ) {
+        return executions;
       }
 
-      const sameDirection =
-        (netQty > 0 && signedQty > 0) ||
-        (netQty < 0 && signedQty < 0);
+      executions.push({
+        symbol,
+        underlyingSymbol: (trade.underlyingSymbol || "").trim().toUpperCase() || undefined,
+        assetCategory: trade.assetCategory,
+        currency: (trade.currency || "").trim().toUpperCase() || "USD",
+        time,
+        signedQuantity: isBuy ? quantity : -quantity,
+        price,
+        commission: Math.abs(trade.commission),
+        multiplier: trade.multiplier > 0 ? trade.multiplier : trade.assetCategory === "OPT" ? 100 : 1,
+        openCloseIndicator: trade.openCloseIndicator,
+        code: trade.code,
+        realizedPnl: trade.realizedPL,
+        executionId: trade.executionId,
+      } satisfies IBExecution);
 
-      if (sameDirection) {
-        // Adding to position
-        const oldAbs = Math.abs(netQty);
-        entryPrice = (entryPrice * oldAbs + exec.tradePrice * absQty) / (oldAbs + absQty);
-        netQty += signedQty;
-        totalCommission += Math.abs(exec.commission);
-        continue;
-      }
-
-      // Closing/reducing
-      const stateAbs = Math.abs(netQty);
-      const closeQty = Math.min(stateAbs, absQty);
-      const openQty = absQty - closeQty;
-      const absCommission = Math.abs(exec.commission);
-      const commissionClose = absQty > 0 ? absCommission * (closeQty / absQty) : 0;
-      const commissionOpen = absCommission - commissionClose;
-      totalCommission += commissionClose;
-
-      const side = netQty > 0 ? "long" : "short";
-      const effectiveMultiplier = contractMultiplier > 0 ? contractMultiplier : 1;
-      if (side === "long") {
-        realizedPnl += (exec.tradePrice - entryPrice) * closeQty * effectiveMultiplier;
-      } else {
-        realizedPnl += (entryPrice - exec.tradePrice) * closeQty * effectiveMultiplier;
-      }
-      exitNotional += exec.tradePrice * closeQty;
-      exitQty += closeQty;
-
-      if (closeQty >= stateAbs - 1e-9) {
-        // Position closed
-        const exitPrice = exitQty > 0 ? exitNotional / exitQty : exec.tradePrice;
-        const completedTrade: ImportableTrade = {
-          symbol,
-          side: side as "long" | "short",
-          entryPrice,
-          exitPrice,
-          entryTime: entryTime!,
-          exitTime: new Date(exec.dateTime),
-          quantity: exitQty,
-          pnl: realizedPnl - totalCommission,
-          commission: totalCommission,
-          importSource: "ib-flex",
-        };
-        completedTrade.importHash = buildTradeImportHash(completedTrade, "ib-flex");
-        result.push(completedTrade);
-
-        // Reset
-        netQty = 0;
-        entryPrice = 0;
-        entryTime = null;
-        totalCommission = 0;
-        realizedPnl = 0;
-        exitNotional = 0;
-        exitQty = 0;
-
-        // Handle flip
-        if (openQty > 1e-9) {
-          netQty = signedQty > 0 ? openQty : -openQty;
-          entryPrice = exec.tradePrice;
-          entryTime = new Date(exec.dateTime);
-          totalCommission = commissionOpen;
-          contractMultiplier = exec.multiplier > 0 ? exec.multiplier : 1;
-        }
-      } else {
-        netQty += signedQty;
-        totalCommission += commissionOpen;
-      }
-    }
-  }
-
-  return result;
+      return executions;
+    }, []);
 }
 
 export function IBFlexQuerySync({ savedToken, savedQueryId, onCredentialsSave }: IBFlexQuerySyncProps) {
@@ -194,6 +110,7 @@ export function IBFlexQuerySync({ savedToken, savedQueryId, onCredentialsSave }:
   const [status, setStatus] = useState<SyncStatus>("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [trades, setTrades] = useState<FlexQueryTrade[]>([]);
+  const [importWarnings, setImportWarnings] = useState<string[]>([]);
   const [importedCount, setImportedCount] = useState(0);
   const [accountInfo, setAccountInfo] = useState<{ accountId: string; fromDate: string; toDate: string } | null>(null);
 
@@ -241,6 +158,7 @@ export function IBFlexQuerySync({ savedToken, savedQueryId, onCredentialsSave }:
     setStatus("syncing");
     setErrorMessage(null);
     setTrades([]);
+    setImportWarnings([]);
     setImportedCount(0);
 
     try {
@@ -268,8 +186,17 @@ export function IBFlexQuerySync({ savedToken, savedQueryId, onCredentialsSave }:
         return;
       }
 
-      // Convert FlexQueryTrades to ImportableTrades and save
-      const importable = mapFlexTradesToImportable(flexTrades);
+      const { trades: importable, warnings } = buildTradesFromIBExecutions(
+        mapFlexTradesToExecutions(flexTrades),
+        {
+          source: "ib-flex",
+          carryInMode: "infer-from-realized-pnl",
+        }
+      );
+      setImportWarnings(warnings);
+      if (warnings.length > 0) {
+        toast(warnings[0]);
+      }
 
       if (importable.length === 0) {
         setStatus("success");
@@ -400,6 +327,17 @@ export function IBFlexQuerySync({ savedToken, savedQueryId, onCredentialsSave }:
         <div className="flex items-center gap-2 p-3 rounded-md bg-red-500/10 text-red-500 text-sm">
           <AlertCircle className="h-4 w-4 flex-shrink-0" />
           {errorMessage}
+        </div>
+      )}
+
+      {importWarnings.length > 0 && (
+        <div className="space-y-1 rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200">
+          {importWarnings.slice(0, 4).map((warning) => (
+            <p key={warning}>{warning}</p>
+          ))}
+          {importWarnings.length > 4 && (
+            <p>{importWarnings.length - 4} weitere Hinweise ausgeblendet.</p>
+          )}
         </div>
       )}
 

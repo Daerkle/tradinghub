@@ -1,7 +1,7 @@
 "use client";
 
 import { Parse, initializeParse } from "./parse";
-import { getMarketDateKey, getMarketWeekdayIndex } from "./market-time";
+import { getMarketDateKey, getMarketHour, getMarketWeekdayIndex } from "./market-time";
 import { buildTradeIdentityKey } from "./trade-import";
 
 // Type definitions
@@ -9,6 +9,7 @@ export interface TradeData {
   id: string;
   symbol: string;
   side: "long" | "short";
+  currency?: string;
   entryPrice: number;
   exitPrice: number;
   entryTime: Date;
@@ -228,6 +229,54 @@ function chunkArray<T>(items: T[], size: number): T[][] {
   return chunks;
 }
 
+function mapTradeRecord(trade: Parse.Object): TradeData {
+  return {
+    id: trade.id ?? "",
+    symbol: trade.get("symbol"),
+    side: trade.get("side"),
+    currency: trade.get("currency") || "USD",
+    entryPrice: trade.get("entryPrice"),
+    exitPrice: trade.get("exitPrice"),
+    entryTime: trade.get("entryTime"),
+    exitTime: trade.get("exitTime"),
+    quantity: trade.get("quantity"),
+    pnl: trade.get("pnl"),
+    commission: trade.get("commission") || 0,
+    setup: trade.get("setup"),
+    notes: trade.get("notes"),
+    screenshots: trade.get("screenshots"),
+    mfe: trade.get("mfe"),
+    mae: trade.get("mae"),
+    importSource: trade.get("importSource"),
+    importHash: trade.get("importHash"),
+  };
+}
+
+async function findAllParseResults(query: Parse.Query<Parse.Object>, pageSize: number = 1000): Promise<Parse.Object[]> {
+  const results: Parse.Object[] = [];
+  let skip = 0;
+
+  while (true) {
+    const pageQuery = Parse.Query.fromJSON(
+      (query as Parse.Query<Parse.Object> & { className: string }).className,
+      query.toJSON()
+    ) as Parse.Query<Parse.Object>;
+    pageQuery.limit(pageSize);
+    pageQuery.skip(skip);
+
+    const page = await pageQuery.find();
+    results.push(...page);
+
+    if (page.length < pageSize) {
+      break;
+    }
+
+    skip += pageSize;
+  }
+
+  return results;
+}
+
 // Trade Service
 export const TradeService = {
   async getAll(): Promise<TradeData[]> {
@@ -236,28 +285,9 @@ export const TradeService = {
     const query = new Parse.Query(Trade);
     query.equalTo("user", Parse.User.current());
     query.descending("exitTime");
-    query.limit(1000);
 
-    const results = await query.find();
-    return results.map((trade) => ({
-      id: trade.id ?? "",
-      symbol: trade.get("symbol"),
-      side: trade.get("side"),
-      entryPrice: trade.get("entryPrice"),
-      exitPrice: trade.get("exitPrice"),
-      entryTime: trade.get("entryTime"),
-      exitTime: trade.get("exitTime"),
-      quantity: trade.get("quantity"),
-      pnl: trade.get("pnl"),
-      commission: trade.get("commission") || 0,
-      setup: trade.get("setup"),
-      notes: trade.get("notes"),
-      screenshots: trade.get("screenshots"),
-      mfe: trade.get("mfe"),
-      mae: trade.get("mae"),
-      importSource: trade.get("importSource"),
-      importHash: trade.get("importHash"),
-    }));
+    const results = await findAllParseResults(query as unknown as Parse.Query<Parse.Object>);
+    return results.map(mapTradeRecord);
   },
 
   async getByDateRange(start: Date, end: Date): Promise<TradeData[]> {
@@ -269,26 +299,25 @@ export const TradeService = {
     query.lessThanOrEqualTo("exitTime", end);
     query.descending("exitTime");
 
-    const results = await query.find();
-    return results.map((trade) => ({
-      id: trade.id ?? "",
-      symbol: trade.get("symbol"),
-      side: trade.get("side"),
-      entryPrice: trade.get("entryPrice"),
-      exitPrice: trade.get("exitPrice"),
-      entryTime: trade.get("entryTime"),
-      exitTime: trade.get("exitTime"),
-      quantity: trade.get("quantity"),
-      pnl: trade.get("pnl"),
-      commission: trade.get("commission") || 0,
-      setup: trade.get("setup"),
-      notes: trade.get("notes"),
-      screenshots: trade.get("screenshots"),
-      mfe: trade.get("mfe"),
-      mae: trade.get("mae"),
-      importSource: trade.get("importSource"),
-      importHash: trade.get("importHash"),
-    }));
+    const results = await findAllParseResults(query as unknown as Parse.Query<Parse.Object>);
+    return results.map(mapTradeRecord);
+  },
+
+  async getByMarketDate(date: Date | string): Promise<TradeData[]> {
+    const anchor = new Date(date);
+    const targetKey = toLocalDateKey(anchor);
+    const start = new Date(anchor);
+    start.setDate(start.getDate() - 1);
+    start.setHours(0, 0, 0, 0);
+
+    const end = new Date(anchor);
+    end.setDate(end.getDate() + 1);
+    end.setHours(23, 59, 59, 999);
+
+    const trades = await this.getByDateRange(start, end);
+    return trades
+      .filter((trade) => toLocalDateKey(trade.exitTime) === targetKey)
+      .sort((a, b) => new Date(b.exitTime).getTime() - new Date(a.exitTime).getTime());
   },
 
   async create(data: Omit<TradeData, "id">): Promise<TradeData> {
@@ -299,6 +328,7 @@ export const TradeService = {
     trade.set("user", Parse.User.current());
     trade.set("symbol", data.symbol);
     trade.set("side", data.side);
+    trade.set("currency", data.currency || "USD");
     trade.set("entryPrice", data.entryPrice);
     trade.set("exitPrice", data.exitPrice);
     trade.set("entryTime", data.entryTime);
@@ -334,6 +364,7 @@ export const TradeService = {
       trade.set("user", Parse.User.current());
       trade.set("symbol", data.symbol);
       trade.set("side", data.side);
+      trade.set("currency", data.currency || "USD");
       trade.set("entryPrice", data.entryPrice);
       trade.set("exitPrice", data.exitPrice);
       trade.set("entryTime", data.entryTime);
@@ -489,6 +520,7 @@ export const TradeService = {
         entryTime: trade.get("entryTime"),
         exitTime: trade.get("exitTime"),
         quantity: trade.get("quantity"),
+        currency: trade.get("currency") || "USD",
         pnl: trade.get("pnl"),
         commission: trade.get("commission") || 0,
         setup: trade.get("setup"),
@@ -512,6 +544,7 @@ export const TradeService = {
 
     if (data.symbol) trade.set("symbol", data.symbol);
     if (data.side) trade.set("side", data.side);
+    if (data.currency !== undefined) trade.set("currency", data.currency || "USD");
     if (data.entryPrice !== undefined) trade.set("entryPrice", data.entryPrice);
     if (data.exitPrice !== undefined) trade.set("exitPrice", data.exitPrice);
     if (data.entryTime) trade.set("entryTime", data.entryTime);
@@ -1421,11 +1454,24 @@ export const NoteTemplates: NoteTemplate[] = [
 export const CalendarService = {
   async getDailyPnL(startDate: Date, endDate: Date): Promise<DailyPnL[]> {
     initializeParse();
-    const trades = await TradeService.getByDateRange(startDate, endDate);
+    const startKey = toLocalDateKey(startDate);
+    const endKey = toLocalDateKey(endDate);
+    const expandedStart = new Date(startDate);
+    expandedStart.setDate(expandedStart.getDate() - 1);
+    expandedStart.setHours(0, 0, 0, 0);
+
+    const expandedEnd = new Date(endDate);
+    expandedEnd.setDate(expandedEnd.getDate() + 1);
+    expandedEnd.setHours(23, 59, 59, 999);
+
+    const trades = await TradeService.getByDateRange(expandedStart, expandedEnd);
     const dailyPnLMap = new Map<string, { pnl: number; trades: number }>();
 
     trades.forEach((trade) => {
       const dateKey = toLocalDateKey(trade.exitTime);
+      if (dateKey < startKey || dateKey > endKey) {
+        return;
+      }
       const current = dailyPnLMap.get(dateKey) || { pnl: 0, trades: 0 };
       dailyPnLMap.set(dateKey, {
         pnl: current.pnl + trade.pnl,
@@ -1590,7 +1636,7 @@ export const ReportService = {
     const hourStats = new Map<number, { pnl: number; wins: number; total: number }>();
 
     for (const trade of trades) {
-      const hour = new Date(trade.entryTime).getHours();
+      const hour = getMarketHour(new Date(trade.entryTime));
       const current = hourStats.get(hour) || { pnl: 0, wins: 0, total: 0 };
       current.pnl += trade.pnl;
       current.total++;
@@ -1638,8 +1684,7 @@ export const ReportService = {
     const monthStats = new Map<string, { pnl: number; wins: number; total: number }>();
 
     for (const trade of trades) {
-      const date = new Date(trade.exitTime);
-      const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+      const monthKey = toLocalDateKey(trade.exitTime).slice(0, 7);
       const current = monthStats.get(monthKey) || { pnl: 0, wins: 0, total: 0 };
       current.pnl += trade.pnl;
       current.total++;

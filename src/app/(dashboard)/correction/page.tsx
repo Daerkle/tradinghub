@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { RefreshCw, TrendingDown, TrendingUp, Minus } from "lucide-react";
+import { RefreshCw, TrendingDown, TrendingUp, Minus, LayoutGrid, TableProperties } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -29,6 +29,9 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
+import { SlimStatCard } from "@/components/dashboard/slim-stat-card";
+import { readClientJsonCache, writeClientJsonCache } from "@/lib/client-json-cache";
+import { cn } from "@/lib/utils";
 
 type IndexSnapshot = {
   symbol: "SPY" | "QQQ";
@@ -66,6 +69,9 @@ type MatrixRow = {
   catalystScore: number;
 };
 
+const CORRECTION_CACHE_KEY = "correction";
+const CORRECTION_MAX_AGE_MS = 2 * 60 * 1000;
+
 type CorrectionResponse = {
   fetchedAt: string;
   source: {
@@ -92,6 +98,38 @@ type CorrectionResponse = {
   matrix: MatrixRow[];
 };
 
+type MatrixBoardRow =
+  | "1-uptrend"
+  | "2-bull-pullback"
+  | "3-transition"
+  | "4-early-base"
+  | "5-downtrend";
+
+type MatrixBoardColumn =
+  | "up"
+  | "strengthening"
+  | "weakening"
+  | "recovering"
+  | "deteriorating"
+  | "down";
+
+const BOARD_ROWS: Array<{ key: MatrixBoardRow; label: string }> = [
+  { key: "1-uptrend", label: "1-Uptrend" },
+  { key: "2-bull-pullback", label: "2-Bull Pullback" },
+  { key: "3-transition", label: "3-Transition" },
+  { key: "4-early-base", label: "4-Early Base" },
+  { key: "5-downtrend", label: "5-Downtrend" },
+];
+
+const BOARD_COLUMNS: Array<{ key: MatrixBoardColumn; label: string }> = [
+  { key: "up", label: "Up" },
+  { key: "strengthening", label: "Strengthening" },
+  { key: "weakening", label: "Weakening" },
+  { key: "recovering", label: "Recovering" },
+  { key: "deteriorating", label: "Deteriorating" },
+  { key: "down", label: "Down" },
+];
+
 function formatPercent(value: number): string {
   const sign = value > 0 ? "+" : "";
   return `${sign}${value.toFixed(1)}%`;
@@ -110,6 +148,46 @@ function distanceTone(value: number): string {
   return "text-red-500";
 }
 
+function getBoardRow(row: MatrixRow): MatrixBoardRow {
+  if (row.momentum3M >= 25 && row.distanceFrom52WkHigh >= -10) return "1-uptrend";
+  if (row.momentum3M >= 10 && row.distanceFrom52WkHigh >= -20) return "2-bull-pullback";
+  if (row.momentum3M >= 0 && row.distanceFrom52WkHigh >= -30) return "3-transition";
+  if (row.momentum3M >= -10 && row.distanceFrom52WkHigh >= -45) return "4-early-base";
+  return "5-downtrend";
+}
+
+function getBoardColumn(row: MatrixRow): MatrixBoardColumn {
+  if (row.changePercent >= 1 && row.momentum1M > 10) return "up";
+  if (row.momentum1M >= 0 && row.momentum3M > 0 && row.changePercent >= 0) return "strengthening";
+  if (row.momentum3M > 0 && row.changePercent < 0) return "weakening";
+  if (row.momentum1M > 0 && row.momentum3M <= 0) return "recovering";
+  if (row.momentum1M < 0 && row.momentum3M > 0) return "deteriorating";
+  return "down";
+}
+
+function getBoardScore(row: MatrixRow): number {
+  return (
+    Math.max(0, row.catalystScore) * 0.35 +
+    Math.max(0, row.sectorHeatScore) * 0.2 +
+    Math.max(0, row.momentum1M) * 0.15 +
+    Math.max(0, row.momentum3M) * 0.2 +
+    Math.max(0, 25 + row.distanceFrom52WkHigh) * 0.1
+  );
+}
+
+function cellTone(column: MatrixBoardColumn): string {
+  if (column === "up" || column === "strengthening" || column === "recovering") {
+    return "border-emerald-500/20 bg-emerald-500/[0.08]";
+  }
+  if (column === "weakening") {
+    return "border-amber-500/20 bg-amber-500/[0.07]";
+  }
+  if (column === "deteriorating" || column === "down") {
+    return "border-rose-500/20 bg-rose-500/[0.08]";
+  }
+  return "border-border bg-card";
+}
+
 export default function CorrectionPage() {
   const [data, setData] = useState<CorrectionResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -117,21 +195,34 @@ export default function CorrectionPage() {
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [sectorFilter, setSectorFilter] = useState("all");
+  const [view, setView] = useState<"board" | "table">("board");
 
   const loadData = async (forceRefresh: boolean = false) => {
     const query = forceRefresh ? "?refresh=true" : "";
+    const cached = !forceRefresh
+      ? readClientJsonCache<CorrectionResponse>(CORRECTION_CACHE_KEY, {
+          maxAgeMs: CORRECTION_MAX_AGE_MS,
+          allowStale: true,
+        })
+      : null;
+
     try {
-      if (forceRefresh) setIsRefreshing(true);
+      if (cached) {
+        setData(cached.data);
+        setIsLoading(false);
+        setIsRefreshing(true);
+      } else if (forceRefresh) setIsRefreshing(true);
       else setIsLoading(true);
 
       const response = await fetch(`/api/scanner/correction${query}`);
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const payload = (await response.json()) as CorrectionResponse;
       setData(payload);
+      writeClientJsonCache(CORRECTION_CACHE_KEY, payload);
       setError(null);
     } catch (err) {
       console.error("Failed to load correction data:", err);
-      setError("Korrektur-Daten konnten nicht geladen werden.");
+      if (!cached) setError("Korrektur-Daten konnten nicht geladen werden.");
       if (forceRefresh) {
         toast.error("Aktualisierung fehlgeschlagen");
       }
@@ -161,9 +252,29 @@ export default function CorrectionPage() {
     });
   }, [data, search, sectorFilter]);
 
+  const boardCells = useMemo(() => {
+    const grouped = new Map<string, MatrixRow[]>();
+
+    for (const row of filteredMatrix) {
+      const key = `${getBoardRow(row)}:${getBoardColumn(row)}`;
+      const bucket = grouped.get(key) ?? [];
+      bucket.push(row);
+      grouped.set(key, bucket);
+    }
+
+    for (const [key, rows] of grouped.entries()) {
+      grouped.set(
+        key,
+        rows.slice().sort((a, b) => getBoardScore(b) - getBoardScore(a)).slice(0, 8)
+      );
+    }
+
+    return grouped;
+  }, [filteredMatrix]);
+
   if (isLoading) {
     return (
-      <div className="space-y-6">
+      <div className="space-y-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Korrektur & Sentiment</h1>
           <p className="text-muted-foreground">SPY/QQQ EMA-Lage und 52W-High-Matrix</p>
@@ -196,13 +307,13 @@ export default function CorrectionPage() {
 
   if (error || !data) {
     return (
-      <div className="space-y-6">
+      <div className="space-y-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Korrektur & Sentiment</h1>
           <p className="text-muted-foreground">SPY/QQQ EMA-Lage und 52W-High-Matrix</p>
         </div>
         <Card className="border-destructive">
-          <CardContent className="pt-6 space-y-4">
+          <CardContent className="pt-4 space-y-4">
             <p className="text-destructive">{error || "Keine Daten verfügbar"}</p>
             <Button variant="outline" onClick={() => loadData(true)}>
               Erneut versuchen
@@ -214,7 +325,7 @@ export default function CorrectionPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Korrektur & Sentiment</h1>
@@ -236,72 +347,32 @@ export default function CorrectionPage() {
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-4">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">Sentiment</CardTitle>
-            <CardDescription>Gesamtscore: {data.sentiment.score}</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="flex items-center gap-2">
-              {data.sentiment.label === "Bullish" ? (
-                <TrendingUp className="h-5 w-5 text-emerald-500" />
-              ) : data.sentiment.label === "Bearish" ? (
-                <TrendingDown className="h-5 w-5 text-red-500" />
-              ) : (
-                <Minus className="h-5 w-5 text-amber-500" />
-              )}
-              <span className="text-2xl font-bold">{data.sentiment.label}</span>
-            </div>
-            <p className="mt-2 text-xs text-muted-foreground">{data.sentiment.explanation}</p>
-          </CardContent>
-        </Card>
+      <div className="grid gap-3 md:grid-cols-4">
+        <SlimStatCard
+          icon={data.sentiment.label === "Bullish" ? TrendingUp : data.sentiment.label === "Bearish" ? TrendingDown : Minus}
+          label="Sentiment"
+          value={`${data.sentiment.label} · ${data.sentiment.score}`}
+          hint={data.sentiment.explanation}
+          toneClassName={data.sentiment.label === "Bullish" ? "text-emerald-500" : data.sentiment.label === "Bearish" ? "text-red-500" : "text-amber-500"}
+        />
 
         {data.indexes.map((index) => (
-          <Card key={index.symbol}>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium">{index.symbol}</CardTitle>
-              <CardDescription>
-                ${index.price.toFixed(2)} • EMA10 ${index.ema10.toFixed(2)} • EMA20 ${index.ema20.toFixed(2)}
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              <div className={`text-lg font-semibold ${trendTone(index.trend)}`}>{index.trend.toUpperCase()}</div>
-              <div className="flex flex-wrap gap-2">
-                <Badge variant={index.aboveEma10 ? "default" : "secondary"}>
-                  {index.aboveEma10 ? "Über EMA10" : "Unter EMA10"}
-                </Badge>
-                <Badge variant={index.aboveEma20 ? "default" : "secondary"}>
-                  {index.aboveEma20 ? "Über EMA20" : "Unter EMA20"}
-                </Badge>
-                <Badge variant={index.ema10AboveEma20 ? "default" : "secondary"}>
-                  {index.ema10AboveEma20 ? "EMA10 > EMA20" : "EMA10 < EMA20"}
-                </Badge>
-              </div>
-            </CardContent>
-          </Card>
+          <SlimStatCard
+            key={index.symbol}
+            icon={index.trend === "bullish" ? TrendingUp : index.trend === "bearish" ? TrendingDown : Minus}
+            label={index.symbol}
+            value={`${index.trend.toUpperCase()} · $${index.price.toFixed(2)}`}
+            hint={`EMA10 ${index.ema10.toFixed(2)} · EMA20 ${index.ema20.toFixed(2)}`}
+            toneClassName={trendTone(index.trend)}
+          />
         ))}
 
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">Marktbreite</CardTitle>
-            <CardDescription>{data.breadth.total} Aktien im Universum</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-1 text-sm">
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">Über EMA10</span>
-              <span>{data.breadth.pctAboveEma10.toFixed(1)}%</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">Über EMA20</span>
-              <span>{data.breadth.pctAboveEma20.toFixed(1)}%</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">Nahe 52W-Hoch</span>
-              <span>{data.breadth.pctNear52WHigh.toFixed(1)}%</span>
-            </div>
-          </CardContent>
-        </Card>
+        <SlimStatCard
+          icon={LayoutGrid}
+          label="Marktbreite"
+          value={`${data.breadth.total} Aktien`}
+          hint={`EMA10 ${data.breadth.pctAboveEma10.toFixed(1)}% · EMA20 ${data.breadth.pctAboveEma20.toFixed(1)}% · 52W ${data.breadth.pctNear52WHigh.toFixed(1)}%`}
+        />
       </div>
 
       <Card>
@@ -353,50 +424,138 @@ export default function CorrectionPage() {
                 ))}
               </SelectContent>
             </Select>
+            <div className="flex gap-2">
+              <Button
+                variant={view === "board" ? "default" : "outline"}
+                size="sm"
+                onClick={() => setView("board")}
+                className="gap-2"
+              >
+                <LayoutGrid className="h-4 w-4" />
+                Board
+              </Button>
+              <Button
+                variant={view === "table" ? "default" : "outline"}
+                size="sm"
+                onClick={() => setView("table")}
+                className="gap-2"
+              >
+                <TableProperties className="h-4 w-4" />
+                Tabelle
+              </Button>
+            </div>
           </div>
 
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Symbol</TableHead>
-                <TableHead className="hidden md:table-cell">Sektor</TableHead>
-                <TableHead className="hidden lg:table-cell">Industry</TableHead>
-                <TableHead>Preis</TableHead>
-                <TableHead>%Tag</TableHead>
-                <TableHead className="hidden sm:table-cell">3M</TableHead>
-                <TableHead>Abstand 52W-Hoch</TableHead>
-                <TableHead className="hidden md:table-cell">Heat</TableHead>
-                <TableHead className="hidden md:table-cell">Catalyst</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filteredMatrix.length === 0 ? (
+          {view === "board" ? (
+            <div className="overflow-x-auto pb-2">
+              <div className="grid min-w-[1380px] grid-cols-[170px_repeat(6,minmax(190px,1fr))] gap-3">
+                <Card className="border-dashed">
+                  <CardContent className="flex h-full min-h-[68px] items-center px-4 py-3">
+                    <div>
+                      <div className="text-sm font-semibold">EMA Trend x Regime</div>
+                      <div className="text-xs text-muted-foreground">Kompakter Marktstruktur-Board</div>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {BOARD_COLUMNS.map((column) => (
+                  <Card key={column.key}>
+                    <CardContent className="min-h-[68px] px-4 py-3">
+                      <div className="text-sm font-semibold">{column.label}</div>
+                    </CardContent>
+                  </Card>
+                ))}
+
+                {BOARD_ROWS.flatMap((boardRow) => {
+                  return [
+                    <Card key={`${boardRow.key}-label`}>
+                      <CardContent className="min-h-[88px] px-4 py-4">
+                        <div className="text-sm font-semibold">{boardRow.label}</div>
+                      </CardContent>
+                    </Card>,
+                    ...BOARD_COLUMNS.map((column) => {
+                      const cellRows = boardCells.get(`${boardRow.key}:${column.key}`) ?? [];
+
+                      return (
+                        <Card key={`${boardRow.key}-${column.key}`} className={cn("min-h-[88px] border", cellTone(column.key))}>
+                          <CardContent className="px-3 py-3">
+                            <div className="space-y-2">
+                              {cellRows.length === 0 ? (
+                                <div className="h-6 rounded-md border border-dashed border-muted-foreground/15 bg-background/20" />
+                              ) : (
+                                cellRows.map((row) => (
+                                  <div
+                                    key={`${boardRow.key}-${column.key}-${row.symbol}`}
+                                    className="rounded-md border border-white/10 bg-white/5 px-2.5 py-1.5"
+                                  >
+                                    <div className="flex items-center justify-between gap-2">
+                                      <span className="text-xs font-semibold">{row.symbol}</span>
+                                      <span className="text-[11px] text-muted-foreground">{getBoardScore(row).toFixed(0)}</span>
+                                    </div>
+                                    <div className="mt-0.5 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+                                      <span className={row.changePercent >= 0 ? "text-emerald-500" : "text-red-500"}>
+                                        {formatPercent(row.changePercent)}
+                                      </span>
+                                      <span className={distanceTone(row.distanceFrom52WkHigh)}>
+                                        {formatPercent(row.distanceFrom52WkHigh)}
+                                      </span>
+                                    </div>
+                                  </div>
+                                ))
+                              )}
+                            </div>
+                          </CardContent>
+                        </Card>
+                      );
+                    }),
+                  ];
+                })}
+              </div>
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
                 <TableRow>
-                  <TableCell colSpan={9} className="text-center text-muted-foreground">
-                    Keine Treffer für den aktuellen Filter.
-                  </TableCell>
+                  <TableHead>Symbol</TableHead>
+                  <TableHead className="hidden md:table-cell">Sektor</TableHead>
+                  <TableHead className="hidden lg:table-cell">Industry</TableHead>
+                  <TableHead>Preis</TableHead>
+                  <TableHead>%Tag</TableHead>
+                  <TableHead className="hidden sm:table-cell">3M</TableHead>
+                  <TableHead>Abstand 52W-Hoch</TableHead>
+                  <TableHead className="hidden md:table-cell">Heat</TableHead>
+                  <TableHead className="hidden md:table-cell">Catalyst</TableHead>
                 </TableRow>
-              ) : (
-                filteredMatrix.map((row) => (
-                  <TableRow key={`${row.symbol}-${row.sector}`}>
-                    <TableCell className="font-medium">{row.symbol}</TableCell>
-                    <TableCell className="hidden md:table-cell">{row.sector}</TableCell>
-                    <TableCell className="hidden lg:table-cell">{row.industry}</TableCell>
-                    <TableCell>${row.price.toFixed(2)}</TableCell>
-                    <TableCell className={row.changePercent >= 0 ? "text-emerald-500" : "text-red-500"}>
-                      {formatPercent(row.changePercent)}
+              </TableHeader>
+              <TableBody>
+                {filteredMatrix.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={9} className="text-center text-muted-foreground">
+                      Keine Treffer für den aktuellen Filter.
                     </TableCell>
-                    <TableCell className="hidden sm:table-cell">{formatPercent(row.momentum3M)}</TableCell>
-                    <TableCell className={distanceTone(row.distanceFrom52WkHigh)}>
-                      {formatPercent(row.distanceFrom52WkHigh)}
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell">{row.sectorHeatScore.toFixed(0)}</TableCell>
-                    <TableCell className="hidden md:table-cell">{row.catalystScore.toFixed(0)}</TableCell>
                   </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
+                ) : (
+                  filteredMatrix.map((row) => (
+                    <TableRow key={`${row.symbol}-${row.sector}`}>
+                      <TableCell className="font-medium">{row.symbol}</TableCell>
+                      <TableCell className="hidden md:table-cell">{row.sector}</TableCell>
+                      <TableCell className="hidden lg:table-cell">{row.industry}</TableCell>
+                      <TableCell>${row.price.toFixed(2)}</TableCell>
+                      <TableCell className={row.changePercent >= 0 ? "text-emerald-500" : "text-red-500"}>
+                        {formatPercent(row.changePercent)}
+                      </TableCell>
+                      <TableCell className="hidden sm:table-cell">{formatPercent(row.momentum3M)}</TableCell>
+                      <TableCell className={distanceTone(row.distanceFrom52WkHigh)}>
+                        {formatPercent(row.distanceFrom52WkHigh)}
+                      </TableCell>
+                      <TableCell className="hidden md:table-cell">{row.sectorHeatScore.toFixed(0)}</TableCell>
+                      <TableCell className="hidden md:table-cell">{row.catalystScore.toFixed(0)}</TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          )}
         </CardContent>
       </Card>
     </div>

@@ -323,7 +323,7 @@ export default function NotesPage() {
           <Skeleton className="h-8 w-full" />
         </div>
         {/* Content Skeleton */}
-        <div className="flex-1 p-4 sm:p-6 space-y-4">
+        <div className="flex-1 p-4 sm:p-4 space-y-4">
           <Skeleton className="h-10 w-48" />
           <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
             {[1, 2, 3, 4, 5, 6].map((i) => (
@@ -337,9 +337,9 @@ export default function NotesPage() {
 
   if (error) {
     return (
-      <div className="p-6">
+      <div className="p-4">
         <Card className="border-destructive">
-          <CardContent className="pt-6">
+          <CardContent className="pt-4">
             <p className="text-destructive">{error}</p>
           </CardContent>
         </Card>
@@ -522,7 +522,7 @@ export default function NotesPage() {
         <div className="flex-1 overflow-auto p-3 sm:p-4">
           {sortedNotes.length === 0 ? (
             <Card className="max-w-md mx-auto mt-8">
-              <CardContent className="pt-6 text-center">
+              <CardContent className="pt-4 text-center">
                 <FileText className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
                 <p className="text-muted-foreground mb-4">
                   {searchQuery

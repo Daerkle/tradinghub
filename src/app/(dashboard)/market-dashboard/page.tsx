@@ -18,7 +18,7 @@ export default function MarketDashboardPage() {
         </a>
       </div>
 
-      <div className="h-[calc(100dvh-180px)] min-h-[460px] overflow-hidden rounded-md border bg-black sm:h-[calc(100vh-205px)] sm:min-h-[620px]">
+      <div className="h-[calc(100dvh-170px)] min-h-[340px] overflow-hidden rounded-md border bg-black sm:h-[calc(100vh-190px)] sm:min-h-[460px]">
         <iframe
           title="Market Dashboard"
           src="/market-dashboard/index.html"

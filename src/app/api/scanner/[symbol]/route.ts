@@ -3,6 +3,8 @@ import { fetchStockData, fetchStockNews, applyCatalystMetrics, buildStockFromFin
 import { fetchFinvizDataCached } from "@/lib/finviz-service";
 import { symbolRateLimit } from "@/lib/rate-limiter";
 import { isSameMarketDay } from "@/lib/market-time";
+import { getCachedScannerResults, getCachedSeededScannerResults } from "@/lib/redis-cache";
+import type { ScanResult } from "@/lib/scanner-service";
 
 export async function GET(
   request: NextRequest,
@@ -19,6 +21,18 @@ export async function GET(
   try {
     // Fetch stock data from Yahoo Finance
     let stockData = await fetchStockData(symbol.toUpperCase());
+
+    if (!stockData) {
+      const [cachedFull, cachedSeeded] = await Promise.all([
+        getCachedScannerResults<ScanResult>(),
+        getCachedSeededScannerResults<ScanResult>(),
+      ]);
+
+      stockData =
+        cachedFull?.stocks.find((entry) => entry.symbol?.toUpperCase() === symbol.toUpperCase()) ??
+        cachedSeeded?.stocks.find((entry) => entry.symbol?.toUpperCase() === symbol.toUpperCase()) ??
+        null;
+    }
 
     // Fetch additional Finviz data (also used as fallback when Yahoo is unavailable)
     const finvizData = await fetchFinvizDataCached(symbol.toUpperCase());

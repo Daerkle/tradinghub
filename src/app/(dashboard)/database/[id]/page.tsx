@@ -139,7 +139,7 @@ export default function SetupDetailPage({ params }: { params: Promise<{ id: stri
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[400px]">
+      <div className="flex items-center justify-center min-h-[300px]">
         <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
       </div>
     );
@@ -147,7 +147,7 @@ export default function SetupDetailPage({ params }: { params: Promise<{ id: stri
 
   if (!setup) {
     return (
-      <div className="container mx-auto py-6">
+      <div className="container mx-auto py-4">
         <p className="text-muted-foreground">Setup nicht gefunden</p>
       </div>
     );
@@ -207,7 +207,7 @@ export default function SetupDetailPage({ params }: { params: Promise<{ id: stri
   };
 
   return (
-    <div className="container mx-auto py-6 space-y-6">
+    <div className="container mx-auto py-4 space-y-4">
       {/* Header */}
       <div className="flex items-start justify-between">
         <div className="space-y-1">
@@ -216,7 +216,7 @@ export default function SetupDetailPage({ params }: { params: Promise<{ id: stri
             Zurück
           </Button>
           <div className="flex items-center gap-4">
-            <h1 className="text-4xl font-bold tracking-tight">{setup.symbol}</h1>
+            <h1 className="text-2xl font-bold tracking-tight">{setup.symbol}</h1>
             <Badge variant="outline" className="text-lg gap-2 px-3 py-1">
               <span className={`w-3 h-3 rounded-full ${typeInfo.color}`} />
               {typeInfo.label}
@@ -228,7 +228,7 @@ export default function SetupDetailPage({ params }: { params: Promise<{ id: stri
       </div>
 
       {/* Main Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Chart - 2 columns */}
         <div className="lg:col-span-2">
           <SetupChart
@@ -243,7 +243,7 @@ export default function SetupDetailPage({ params }: { params: Promise<{ id: stri
         </div>
 
         {/* Sidebar - 1 column */}
-        <div className="space-y-6">
+        <div className="space-y-4">
           {/* Setup Metrics */}
           <Card>
             <CardHeader>

@@ -3,27 +3,11 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  LayoutDashboard,
-  BarChart3,
-  Image,
-  BookOpen,
-  Database,
   Settings,
   LogOut,
   Moon,
   Sun,
   ChevronDown,
-  Radar,
-  Rows3,
-  Calendar,
-  FileText,
-  Activity,
-  CalendarDays,
-  ScrollText,
-  NotebookPen,
-  Book,
-  Video,
-  Save,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 
@@ -48,218 +32,88 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { NAV_GROUPS, isNavItemActive } from "@/lib/navigation";
 import { useAuthStore } from "@/stores/auth-store";
+import { useUserSettingsStore } from "@/stores/user-settings-store";
+import { TradingHubMark } from "@/components/brand/tradinghub-logo";
 
 
 export function AppSidebar() {
   const pathname = usePathname();
   const { theme, setTheme } = useTheme();
   const { user, logout } = useAuthStore();
-  const { state } = useSidebar();
+  const saveSettings = useUserSettingsStore((state) => state.saveSettings);
+  const { state, isMobile, setOpenMobile } = useSidebar();
+
+  const handleMobileNav = () => {
+    if (isMobile) {
+      setOpenMobile(false);
+    }
+  };
+
+  const handleThemeToggle = () => {
+    const nextTheme = theme === "dark" ? "light" : "dark";
+    setTheme(nextTheme);
+    saveSettings({ preferences: { theme: nextTheme } }).catch((error) => {
+      console.error("Failed to persist theme toggle:", error);
+    });
+  };
 
   return (
     <Sidebar collapsible="icon">
       <SidebarHeader className="border-b border-sidebar-border">
-        <div className="flex items-center gap-2 px-2 py-2">
+        <div className="flex h-11 items-center gap-2 px-2">
+          <Link
+            href="/dashboard"
+            onClick={handleMobileNav}
+            className="flex min-w-0 items-center gap-2 rounded-md outline-none ring-sidebar-ring transition-opacity hover:opacity-90 focus-visible:ring-2"
+            aria-label="TradingHub Dashboard"
+          >
+            <TradingHubMark className="h-8 w-8" />
           {state === "expanded" && (
-            <div className="flex items-center text-lg font-bold tracking-tight">
-              <span className="text-foreground">Trading</span>
-              <span className="text-muted-foreground">Hub</span>
+            <div className="flex min-w-0 flex-col leading-none">
+              <div className="flex items-center text-base font-semibold tracking-tight">
+                <span className="text-foreground">Trading</span>
+                <span className="text-muted-foreground">Hub</span>
+              </div>
+              <span className="mt-0.5 text-[10px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                Heat Scanner
+              </span>
             </div>
           )}
+          </Link>
         </div>
       </SidebarHeader>
 
-      <SidebarContent>
-        {/* General Group */}
-        <SidebarGroup>
-          <SidebarGroupLabel>Allgemein</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild tooltip="Dashboard" isActive={pathname === "/dashboard"}>
-                  <Link href="/dashboard">
-                    <LayoutDashboard className="h-4 w-4" />
-                    <span>Dashboard</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild tooltip="Kalender" isActive={pathname === "/calendar"}>
-                  <Link href="/calendar">
-                    <Calendar className="h-4 w-4" />
-                    <span>Kalender</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild tooltip="Reports" isActive={pathname === "/reports"}>
-                  <Link href="/reports">
-                    <FileText className="h-4 w-4" />
-                    <span>Reports</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-
-        {/* Trading Group */}
-        <SidebarGroup>
-          <SidebarGroupLabel>Trading</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild tooltip="Trades" isActive={pathname === "/trades"}>
-                  <Link href="/trades">
-                    <Activity className="h-4 w-4" />
-                    <span>Trades</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild tooltip="Täglich" isActive={pathname === "/daily"}>
-                  <Link href="/daily">
-                    <CalendarDays className="h-4 w-4" />
-                    <span>Täglich</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild tooltip="Trading-Pläne" isActive={pathname === "/trading-plans"}>
-                  <Link href="/trading-plans">
-                    <ScrollText className="h-4 w-4" />
-                    <span>Trading-Pläne</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-
-        {/* Journal Group */}
-        <SidebarGroup>
-          <SidebarGroupLabel>Logbuch</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild tooltip="Tagebuch" isActive={pathname === "/diary"}>
-                  <Link href="/diary">
-                    <BookOpen className="h-4 w-4" />
-                    <span>Tagebuch</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild tooltip="Notizen" isActive={pathname === "/notes"}>
-                  <Link href="/notes">
-                    <NotebookPen className="h-4 w-4" />
-                    <span>Notizen</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild tooltip="Playbook" isActive={pathname === "/playbook"}>
-                  <Link href="/playbook">
-                    <Book className="h-4 w-4" />
-                    <span>Playbook</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-
-        {/* Media Group */}
-        <SidebarGroup>
-          <SidebarGroupLabel>Medien</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild tooltip="Screenshots" isActive={pathname === "/screenshots"}>
-                  <Link href="/screenshots">
-                    <Image className="h-4 w-4" />
-                    <span>Screenshots</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild tooltip="Videos" isActive={pathname === "/videos"}>
-                  <Link href="/videos">
-                    <Video className="h-4 w-4" />
-                    <span>Videos</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-
-        {/* Tools Group */}
-        <SidebarGroup>
-          <SidebarGroupLabel>Tools</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild tooltip="Scanner" isActive={pathname === "/scanner"}>
-                  <Link href="/scanner">
-                    <Radar className="h-4 w-4" />
-                    <span>Scanner</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild tooltip="Saisonalitäten" isActive={pathname === "/seasonality"}>
-                  <Link href="/seasonality">
-                    <CalendarDays className="h-4 w-4" />
-                    <span>Saisonalitäten</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild tooltip="Edge Free" isActive={pathname === "/edge-free"}>
-                  <Link href="/edge-free">
-                    <Rows3 className="h-4 w-4" />
-                    <span>Edge Free</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild tooltip="Market Dashboard" isActive={pathname === "/market-dashboard"}>
-                  <Link href="/market-dashboard">
-                    <BarChart3 className="h-4 w-4" />
-                    <span>Market Dashboard</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild tooltip="Korrektur" isActive={pathname === "/correction"}>
-                  <Link href="/correction">
-                    <BarChart3 className="h-4 w-4" />
-                    <span>Korrektur</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild tooltip="Browser" isActive={pathname === "/database"}>
-                  <Link href="/database">
-                    <Database className="h-4 w-4" />
-                    <span>Browser</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild tooltip="Backfill" isActive={pathname === "/database/backfill"}>
-                  <Link href="/database/backfill">
-                    <Save className="h-4 w-4" />
-                    <span>Backfill</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-
+      <SidebarContent className="gap-1 px-1 py-1">
+        {NAV_GROUPS.map((group) => (
+          <SidebarGroup key={group.label} className="px-1.5 py-1">
+            <SidebarGroupLabel className="h-6 px-2 text-[11px] font-semibold uppercase tracking-wide">
+              {group.label}
+            </SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu className="gap-0.5">
+                {group.items.map((item) => {
+                  const Icon = item.icon;
+                  return (
+                    <SidebarMenuItem key={item.href}>
+                      <SidebarMenuButton
+                        asChild
+                        tooltip={item.title}
+                        isActive={isNavItemActive(pathname, item)}
+                      >
+                        <Link href={item.href} onClick={handleMobileNav} prefetch>
+                          <Icon className="h-4 w-4" />
+                          <span>{item.label}</span>
+                        </Link>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  );
+                })}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        ))}
       </SidebarContent>
 
       <SidebarFooter className="border-t border-sidebar-border">
@@ -279,9 +133,9 @@ export function AppSidebar() {
                   </Avatar>
                   {state === "expanded" && (
                     <>
-                      <div className="flex flex-col items-start text-sm">
-                        <span className="font-medium">{user?.username}</span>
-                        <span className="text-xs text-muted-foreground">
+                      <div className="flex min-w-0 flex-1 flex-col items-start text-sm">
+                        <span className="max-w-full truncate font-medium">{user?.username}</span>
+                        <span className="max-w-full truncate text-xs text-muted-foreground">
                           {user?.email}
                         </span>
                       </div>
@@ -290,19 +144,19 @@ export function AppSidebar() {
                   )}
                 </SidebarMenuButton>
               </DropdownMenuTrigger>
-              <DropdownMenuContent
-                side="top"
-                align="start"
-                className="w-56"
-              >
+                <DropdownMenuContent
+                  side="top"
+                  align="start"
+                  className="w-56"
+                >
                 <DropdownMenuItem asChild>
-                  <Link href="/settings" className="flex items-center gap-2">
+                  <Link href="/settings" className="flex items-center gap-2" onClick={handleMobileNav}>
                     <Settings className="h-4 w-4" />
                     Einstellungen
                   </Link>
                 </DropdownMenuItem>
                 <DropdownMenuItem
-                  onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+                  onClick={handleThemeToggle}
                   className="flex items-center gap-2"
                 >
                   {theme === "dark" ? (
